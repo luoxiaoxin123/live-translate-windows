@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LiveTranslate.Core/LiveTranslate.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LiveTranslate.Tests/LiveTranslate.Tests.csproj" />
+  </Folder>
+</Solution>
