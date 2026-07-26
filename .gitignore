@@ -5,3 +5,5 @@ publish/
 .vs/
 .idea/
 *.binlog
+dist/
+*.zip

@@ -38,11 +38,16 @@ dotnet test  LiveTranslate.slnx            # 单元测试
 ### 发布（self-contained，免装 .NET）
 
 ```powershell
-dotnet publish src/LiveTranslate.App/LiveTranslate.App.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -o publish/win-x64
-Compress-Archive -Path publish\win-x64\* -DestinationPath LiveTranslate-win-x64.zip
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 ```
 
-解压后直接运行 `LiveTranslate.exe`。
+产出 `LiveTranslate-win-x64.zip`，结构对接收者友好：
+
+```text
+实时翻译.exe    ← 双击这个启动（内置图标的小启动器）
+使用说明.txt
+app\            ← 程序本体（自包含，无需装 .NET）
+```
 
 ## 使用
 
