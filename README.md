@@ -1,90 +1,93 @@
-# 实时翻译（Live Translate for Windows）
+# Live Translate for Windows
 
-基于 [Google Gemini Live Translate](https://ai.google.dev/gemini-api/docs/live-api/live-translate)（模型 `gemini-3.5-live-translate-preview`）的 **Windows 实时字幕**应用，WinUI 3 原生界面。捕获**本机正在播放的声音**、**麦克风**或两者混合，推流到 Live Translate 接口，屏幕上显示**可拖动缩放的置顶悬浮字幕**，可选**译音**并行播放，停止后可导出 Markdown。
+[简体中文](README.zh-CN.md)
 
-## 功能
+A **real-time subtitle** app for Windows with a native WinUI 3 interface, powered by [Google Gemini Live Translate](https://ai.google.dev/gemini-api/docs/live-api/live-translate) (model `gemini-3.5-live-translate-preview`). It captures **what your PC is playing**, the **microphone**, or both mixed, streams the audio to the Live Translate API, and shows the translation in a **draggable, resizable always-on-top floating subtitle window** — optionally speaking the translation out loud alongside the original audio. After stopping, the session can be exported as Markdown.
 
-| 模块 | 说明 |
-|------|------|
-| 字幕页 | 源/目标语言（21 种）、声音来源、启动/停止、状态与实时预览 |
-| 声音来源 | 媒体音 / 麦克风 / 媒体+麦克风（逐样本混音） |
-| 悬浮字幕 | 置顶、不抢焦点、逐像素透明；顶部把手拖动，右下角把手缩放（字号不变）；位置尺寸记忆 |
-| 显示模式 | 仅译文，或双语（原文 + 译文，中间分隔线） |
-| 自动滚动 | 原文/译文各自滚动；**只有换行时才滚动**，避免字幕抖动 |
-| 音频采集 | 媒体音：WASAPI **进程排除 loopback**（自动排除本应用的译音，杜绝回声循环；Win10 2004+）；不支持时回退经典 loopback + 播译音时暂停采集。麦克风：16 kHz PCM |
-| Live API | WebSocket + `translationConfig`，对齐官方 Live Translate 协议 |
-| 译音 | 默认关闭；与原声并行；音量最高 **200%**（数字增益） |
-| 多 API Key | 最多 10 个；会话启动按顺序轮询；连接测试会逐个测试 |
-| 导出 | 停止后导出本次原文/译文为 Markdown 到「下载」目录 |
-| 语言 | 界面跟随系统：中文系统 → 中文界面，否则英文 |
+## Features
 
-## 运行要求
+| Module | Description |
+|--------|-------------|
+| Subtitles page | Source/target language (21 languages), audio source, start/stop, status and live preview |
+| Audio source | System audio / microphone / both (per-sample mixing) |
+| Floating subtitles | Always on top, never steals focus, per-pixel transparency; drag by the top handle, resize by the bottom-right handle (font size unchanged); position and size remembered |
+| Display modes | Translation only, or bilingual (source + translation with a divider) |
+| Auto-scroll | Each pane scrolls independently, and **only when a new line wraps** — no jitter while a line is still filling in |
+| Audio capture | System audio via WASAPI **process-exclude loopback** (the app's own translated voice is excluded automatically, so no feedback loop; Windows 10 2004+), falling back to classic loopback with capture paused while the translated voice plays. Microphone at 16 kHz PCM |
+| Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol |
+| Translated voice | Off by default; plays alongside the original audio; volume up to **200%** (digital gain) |
+| Multiple API keys | Up to 10; sessions rotate through them; the connection test checks every key |
+| Export | After stopping, export the session transcript as Markdown to Downloads |
+| UI language | Follows the system: Chinese system → Chinese UI, otherwise English |
 
-- Windows 10 2004（19041）及以上，建议 Windows 11
-- [Google AI Studio](https://aistudio.google.com/) 的 API Key
-- 麦克风模式需要允许桌面应用访问麦克风（系统设置 → 隐私）
+## Requirements
 
-## 从源码构建
+- Windows 10 2004 (build 19041) or later, Windows 11 recommended
+- An API key from [Google AI Studio](https://aistudio.google.com/)
+- Microphone mode needs desktop apps allowed to access the microphone (Settings → Privacy)
 
-需要 [.NET 10 SDK](https://dotnet.microsoft.com/download)（无需 Visual Studio）：
+## Building from source
+
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download) (no Visual Studio needed):
 
 ```powershell
-dotnet build LiveTranslate.slnx            # 构建（Debug x64）
-dotnet test  LiveTranslate.slnx            # 单元测试
-# 运行
+dotnet build LiveTranslate.slnx            # build (Debug x64)
+dotnet test  LiveTranslate.slnx            # unit tests
+# run
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
 ```
 
-### 发布（self-contained，免装 .NET）
+### Packaging (self-contained, no .NET install needed)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 ```
 
-产出 `LiveTranslate-win-x64.zip`，结构对接收者友好：
+Produces `LiveTranslate-win-x64.zip` with a recipient-friendly layout:
 
 ```text
-实时翻译.exe    ← 双击这个启动（内置图标的小启动器）
-app\            ← 程序本体（自包含，无需装 .NET）
+实时翻译.exe    ← double-click this to launch (small launcher with the app icon)
+使用说明.txt    ← quick-start notes
+app\            ← the app itself (self-contained)
 ```
 
-## 使用
+## Usage
 
-1. 打开应用 → **设置** → 填入一个或多个 API Key → **保存并测试连接**
-2. **字幕**页选择目标语言与声音来源 → **启动字幕**
-3. 播放外文媒体或对麦克风说话，悬浮窗出现译文
-4. **停止**后可 **导出本次翻译为 Markdown**（保存到「下载」，文件名如 `7月26日-14.30-翻译结果.md`）
+1. Open the app → **Settings** → enter one or more API keys → **Save and test connection**
+2. On the **Subtitles** page pick the target language and audio source → **Start subtitles**
+3. Play foreign-language media or speak into the microphone; the translation appears in the floating window
+4. After **stopping**, export the session as Markdown (saved to Downloads, e.g. `7月26日-14.30-翻译结果.md`)
 
-悬浮窗技巧：拖顶部**细横条**移动；拖右下角**把手**改大小（字号不变）；字号、背景透明度、双语开关在设置页调整，运行中即时生效。
+Floating window tips: drag the **thin bar** at the top to move; drag the **bottom-right handle** to resize (font size stays); font size, background opacity and bilingual mode are in Settings and apply live.
 
-## 项目结构
+## Project layout
 
 ```text
-src/LiveTranslate.Core/   # 无 UI 依赖的业务逻辑（可单测）
-  Audio/    麦克风 / 系统音采集（进程排除 loopback COM interop）/ 混音 / 重采样 / 译音播放
-  Live/     LiveTranslateClient（WebSocket 协议与状态机）
-  Data/     设置(JSON) / API Key(DPAPI 加密) / 语言表
-  Text/     转写累积（服务端累积重写去重）
-  Export/   Markdown 导出
-src/LiveTranslate.App/    # WinUI 3 应用
-  Views/    主窗口、字幕页、设置页、悬浮字幕窗
-  ViewModels/  Services/(会话编排)  Localization/
-tests/LiveTranslate.Tests/  # xUnit 单元测试（协议 / DSP / 存储 / 导出）
+src/LiveTranslate.Core/   # UI-free business logic (unit-testable)
+  Audio/    mic / system-audio capture (process-exclude loopback COM interop) / mixing / resampling / translated-voice playback
+  Live/     LiveTranslateClient (WebSocket protocol and state machine)
+  Data/     settings (JSON) / API keys (DPAPI-encrypted) / language catalog
+  Text/     transcript accumulation (dedupes the server's cumulative rewrites)
+  Export/   Markdown export
+src/LiveTranslate.App/    # WinUI 3 app
+  Views/    main window, subtitles page, settings page, floating subtitle window
+  ViewModels/  Services/ (session orchestration)  Localization/
+tests/LiveTranslate.Tests/  # xUnit unit tests (protocol / DSP / storage / export)
 ```
 
-## 隐私
+## Privacy
 
-- API Key 使用 Windows DPAPI（当前用户）加密保存在 `%LocalAppData%\LiveTranslate\`
-- 音频只发往你配置的端点（默认 Google AI Studio Live API），无自建后端
-- 诊断日志 `%LocalAppData%\LiveTranslate\session.log` 仅记录状态与少量转写片段，可随时删除
+- API keys are stored DPAPI-encrypted (current user) under `%LocalAppData%\LiveTranslate\`
+- Audio is sent only to the endpoint you configure (Google AI Studio Live API by default); there is no backend of ours
+- The diagnostic log `%LocalAppData%\LiveTranslate\session.log` records status and a few transcript snippets; delete it anytime
 
-## 已知限制
+## Known limitations
 
-- 受 DRM/独占模式保护的音频无法被 loopback 捕获 → 改用麦克风
-- Live Translate 以**目标语言**为主；源语言选「自动检测」最稳妥
-- 导出为「全文原文 + 全文译文」两段，非逐句对照
-- 预览版模型与配额可能变化；端点与模型 ID 可在设置中修改
+- DRM-protected or exclusive-mode audio cannot be captured by loopback → use the microphone instead
+- Live Translate is driven by the **target** language; keeping the source language on "Auto-detect" works best
+- Exports are two full sections (source + translation), not sentence-aligned pairs
+- The preview model and its quota may change; the endpoint and model ID are editable in Settings
 
-## 许可
+## License
 
 [Apache License 2.0](LICENSE)
