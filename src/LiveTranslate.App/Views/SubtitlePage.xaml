@@ -31,6 +31,8 @@
                 Title="{x:Bind Vm.StatusText, Mode=OneWay}" />
 
             <Button
+                x:Name="StartStopButton"
+                AutomationProperties.AutomationId="StartStopButton"
                 Command="{x:Bind Vm.ToggleSessionCommand}"
                 Content="{x:Bind Vm.StartStopText, Mode=OneWay}"
                 Style="{StaticResource AccentButtonStyle}" />
@@ -103,7 +105,11 @@
 
             <Border Style="{StaticResource Card}" Visibility="{x:Bind Vm.CanExport, Mode=OneWay}">
                 <StackPanel Spacing="8">
-                    <Button Command="{x:Bind Vm.ExportCommand}" Content="{x:Bind loc:L.ExportMarkdown}" />
+                    <Button
+                        x:Name="ExportButton"
+                        AutomationProperties.AutomationId="ExportButton"
+                        Command="{x:Bind Vm.ExportCommand}"
+                        Content="{x:Bind loc:L.ExportMarkdown}" />
                     <TextBlock
                         IsTextSelectionEnabled="True"
                         Text="{x:Bind Vm.ExportMessage, Mode=OneWay}"

@@ -63,6 +63,23 @@ public sealed class SubtitleSessionService
         _settings.SettingsChanged += OnSettingsChanged;
     }
 
+    private static readonly string LogPath =
+        Path.Combine(UserSettingsRepository.DefaultDirectory(), "session.log");
+
+    private int _loggedInputs;
+    private int _loggedOutputs;
+
+    private static void Log(string message)
+    {
+        try
+        {
+            File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {message}\r\n");
+        }
+        catch
+        {
+        }
+    }
+
     public async Task StartAsync()
     {
         if (IsActive) return;
@@ -82,6 +99,8 @@ public sealed class SubtitleSessionService
         OutputPreview = "";
         CanExport = false;
         _captureStarted = false;
+        _loggedInputs = 0;
+        _loggedOutputs = 0;
 
         var settings = _settings.Current;
         SetStatus(SessionStatus.Starting, "");
@@ -221,6 +240,10 @@ public sealed class SubtitleSessionService
                     _micCapturer!.Start(pcm => client.SendPcm16Le(pcm));
                 }
 
+                if (_systemCapturer != null)
+                {
+                    Log($"system capture: processExclude={_systemCapturer.UsingProcessExclude}");
+                }
                 if (_systemCapturer is { UsingProcessExclude: false })
                 {
                     warning = L.UsingClassicLoopback;
@@ -259,6 +282,9 @@ public sealed class SubtitleSessionService
             _overlayOutput.Append(text);
             _fullOutput.Append(text);
         }
+
+        var logged = isInput ? Interlocked.Increment(ref _loggedInputs) : Interlocked.Increment(ref _loggedOutputs);
+        if (logged is 1 or 10 or 50) Log($"transcript {(isInput ? "in" : "out")} #{logged}: {Tail(text, 60)}");
 
         _dispatcher.TryEnqueue(() =>
         {
@@ -314,6 +340,7 @@ public sealed class SubtitleSessionService
     {
         Status = status;
         StatusMessage = message;
+        Log($"status={status} {message}".TrimEnd());
         StateChanged?.Invoke();
     }
 
