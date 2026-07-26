@@ -3,9 +3,8 @@ using System.Globalization;
 namespace LiveTranslate.App.Localization;
 
 /// <summary>
-/// UI strings. Follows the system language: Chinese UI on a Chinese system, English otherwise
-/// (same behavior as the Android app). Code-based instead of resw so the app builds with the
-/// plain dotnet CLI and no PRI tooling.
+/// UI strings. Follows the system language: Chinese UI on a Chinese system, English otherwise.
+/// Code-based instead of resw so the app builds with the plain dotnet CLI and no PRI tooling.
 /// </summary>
 public static class L
 {
@@ -83,6 +82,6 @@ public static class L
     public static string SectionAbout => T("关于", "About");
     public static string VersionLabel => T("版本", "Version");
     public static string AboutDescription =>
-        T("基于 Google Gemini Live Translate 的实时字幕应用，从 Android 版移植。",
-          "Real-time subtitles powered by Google Gemini Live Translate; ported from the Android app.");
+        T("基于 Google Gemini Live Translate 的实时字幕应用。",
+          "Real-time subtitles powered by Google Gemini Live Translate.");
 }

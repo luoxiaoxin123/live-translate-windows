@@ -2,7 +2,7 @@ using LiveTranslate.Core.Audio;
 
 namespace LiveTranslate.Core.Data;
 
-/// <summary>All persisted user settings; defaults mirror the Android app.</summary>
+/// <summary>All persisted user settings.</summary>
 public sealed record UserSettings
 {
     public const string DefaultEndpoint =

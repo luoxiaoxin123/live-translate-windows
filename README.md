@@ -1,6 +1,6 @@
 # 实时翻译（Live Translate for Windows）
 
-基于 [Google Gemini Live Translate](https://ai.google.dev/gemini-api/docs/live-api/live-translate)（模型 `gemini-3.5-live-translate-preview`）的 **Windows 实时字幕**应用，WinUI 3 原生界面。功能与 Android 版对齐：捕获**本机正在播放的声音**、**麦克风**或两者混合，推流到 Live Translate 接口，屏幕上显示**可拖动缩放的置顶悬浮字幕**，可选**译音**并行播放，停止后可导出 Markdown。
+基于 [Google Gemini Live Translate](https://ai.google.dev/gemini-api/docs/live-api/live-translate)（模型 `gemini-3.5-live-translate-preview`）的 **Windows 实时字幕**应用，WinUI 3 原生界面。捕获**本机正在播放的声音**、**麦克风**或两者混合，推流到 Live Translate 接口，屏幕上显示**可拖动缩放的置顶悬浮字幕**，可选**译音**并行播放，停止后可导出 Markdown。
 
 ## 功能
 
@@ -69,7 +69,7 @@ src/LiveTranslate.Core/   # 无 UI 依赖的业务逻辑（可单测）
 src/LiveTranslate.App/    # WinUI 3 应用
   Views/    主窗口、字幕页、设置页、悬浮字幕窗
   ViewModels/  Services/(会话编排)  Localization/
-tests/LiveTranslate.Tests/  # xUnit（30 项，覆盖协议/DSP/存储/导出）
+tests/LiveTranslate.Tests/  # xUnit 单元测试（协议 / DSP / 存储 / 导出）
 ```
 
 ## 隐私
@@ -87,4 +87,4 @@ tests/LiveTranslate.Tests/  # xUnit（30 项，覆盖协议/DSP/存储/导出）
 
 ## 许可
 
-Apache License 2.0（与 Android 版一致）。
+[Apache License 2.0](LICENSE)

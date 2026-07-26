@@ -4,8 +4,7 @@ namespace LiveTranslate.Core.Audio;
 
 /// <summary>
 /// Captures all system playback EXCEPT this process tree, using WASAPI process-loopback
-/// activation (Windows 10 2004+). This is the Windows equivalent of Android's
-/// ALLOW_CAPTURE_BY_NONE: our own translated-audio playback is never re-captured,
+/// activation (Windows 10 2004+). Our own translated-audio playback is never re-captured,
 /// so media-mode translation cannot feed back on itself.
 ///
 /// Follows the flow of the Microsoft ApplicationLoopback sample:

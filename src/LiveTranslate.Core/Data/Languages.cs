@@ -5,7 +5,7 @@ public sealed record LanguageOption(string Code, string EnglishName, string Chin
     public string DisplayName(bool chinese) => chinese ? ChineseName : EnglishName;
 }
 
-/// <summary>The language catalog offered by the app (same set as the Android version).</summary>
+/// <summary>The language catalog offered by the app.</summary>
 public static class Languages
 {
     public static readonly LanguageOption AutoDetect = new("auto", "Auto-detect", "自动检测");
