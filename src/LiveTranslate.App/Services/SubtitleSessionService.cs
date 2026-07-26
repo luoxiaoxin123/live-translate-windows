@@ -49,6 +49,7 @@ public sealed class SubtitleSessionService
     public bool CanExport { get; private set; }
     public string LastInputFull { get; private set; } = "";
     public string LastOutputFull { get; private set; } = "";
+    private DateTime _lastStoppedAt;
 
     public bool IsActive => Status is SessionStatus.Starting or SessionStatus.Running;
 
@@ -164,6 +165,7 @@ public sealed class SubtitleSessionService
             LastInputFull = _fullInput.Text;
             LastOutputFull = _fullOutput.Text;
             CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
+            _lastStoppedAt = DateTime.Now;
             SetStatus(SessionStatus.Stopped, "");
         }
         finally
@@ -182,7 +184,7 @@ public sealed class SubtitleSessionService
     {
         try
         {
-            var stoppedAt = DateTime.Now;
+            var stoppedAt = _lastStoppedAt == default ? DateTime.Now : _lastStoppedAt;
             var markdown = MarkdownExporter.BuildMarkdown(LastInputFull, LastOutputFull, stoppedAt);
             var path = MarkdownExporter.SaveToDownloads(markdown, stoppedAt);
             return (true, L.ExportedTo(path));
@@ -227,6 +229,7 @@ public sealed class SubtitleSessionService
             LastInputFull = _fullInput.Text;
             LastOutputFull = _fullOutput.Text;
             CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
+            _lastStoppedAt = DateTime.Now;
             SetStatus(SessionStatus.Error, message);
         }
         finally
@@ -242,49 +245,61 @@ public sealed class SubtitleSessionService
         var mode = _settings.Current.AudioSourceMode;
 
         // Capture start-up joins device/COM threads — keep it off the UI thread.
+        // The capturers are built as locals and only published to the fields on the UI
+        // thread, where teardown also runs: either the session is still current and takes
+        // ownership, or they are disposed immediately (no leaked live microphone).
         _ = Task.Run(() =>
         {
+            SystemAudioCapturer? system = null;
+            MicAudioCapturer? mic = null;
+            PcmMixer? mixer = null;
             var warning = "";
             try
             {
+                Action<string> onCaptureError = message => _dispatcher.TryEnqueue(() =>
+                {
+                    if (ReferenceEquals(_client, client)) _ = FailSessionAsync($"Audio capture stopped: {message}");
+                });
+
                 if (mode.NeedsSystemAudio())
                 {
-                    _systemCapturer = new SystemAudioCapturer
+                    system = new SystemAudioCapturer
                     {
                         ShouldMuteOutgoing = () => _player?.IsActivelyPlaying == true,
+                        OnCaptureError = onCaptureError,
                     };
                 }
                 if (mode.NeedsMicrophone())
                 {
-                    _micCapturer = new MicAudioCapturer();
+                    mic = new MicAudioCapturer { OnCaptureError = onCaptureError };
                 }
 
                 if (mode == AudioSourceMode.MediaAndMic)
                 {
-                    _mixer = new PcmMixer(mixed => client.SendPcm16Le(mixed));
-                    _systemCapturer!.Start(pcm => _mixer?.OfferMedia(pcm));
-                    _micCapturer!.Start(pcm => _mixer?.OfferMic(pcm));
+                    var localMixer = new PcmMixer(mixed => client.SendPcm16Le(mixed));
+                    mixer = localMixer;
+                    system!.Start(pcm => localMixer.OfferMedia(pcm));
+                    mic!.Start(pcm => localMixer.OfferMic(pcm));
                 }
                 else if (mode == AudioSourceMode.Media)
                 {
-                    _systemCapturer!.Start(pcm => client.SendPcm16Le(pcm));
+                    system!.Start(pcm => client.SendPcm16Le(pcm));
                 }
                 else
                 {
-                    _micCapturer!.Start(pcm => client.SendPcm16Le(pcm));
+                    mic!.Start(pcm => client.SendPcm16Le(pcm));
                 }
 
-                if (_systemCapturer != null)
+                if (system != null)
                 {
-                    Log($"system capture: processExclude={_systemCapturer.UsingProcessExclude}");
-                }
-                if (_systemCapturer is { UsingProcessExclude: false })
-                {
-                    warning = L.UsingClassicLoopback;
+                    Log($"system capture: processExclude={system.UsingProcessExclude}");
+                    if (!system.UsingProcessExclude) warning = L.UsingClassicLoopback;
                 }
             }
             catch (Exception ex)
             {
+                try { system?.Dispose(); } catch { }
+                try { mic?.Dispose(); } catch { }
                 _dispatcher.TryEnqueue(() =>
                 {
                     if (ReferenceEquals(_client, client)) _ = FailSessionAsync($"Audio capture failed: {ex.Message}");
@@ -296,7 +311,16 @@ public sealed class SubtitleSessionService
             {
                 if (ReferenceEquals(_client, client) && Status == SessionStatus.Starting)
                 {
+                    _systemCapturer = system;
+                    _micCapturer = mic;
+                    _mixer = mixer;
                     SetStatus(SessionStatus.Running, warning);
+                }
+                else
+                {
+                    // Session was stopped while capture was spinning up — don't leak it.
+                    try { system?.Dispose(); } catch { }
+                    try { mic?.Dispose(); } catch { }
                 }
             });
         });
@@ -378,6 +402,11 @@ public sealed class SubtitleSessionService
         StateChanged?.Invoke();
     }
 
-    private static string Tail(string text, int maxChars) =>
-        text.Length <= maxChars ? text : text[^maxChars..];
+    private static string Tail(string text, int maxChars)
+    {
+        if (text.Length <= maxChars) return text;
+        var start = text.Length - maxChars;
+        if (char.IsLowSurrogate(text[start])) start++; // never split a surrogate pair
+        return text[start..];
+    }
 }

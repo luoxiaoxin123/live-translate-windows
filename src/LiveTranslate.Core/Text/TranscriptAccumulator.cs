@@ -46,7 +46,9 @@ public sealed class TranscriptAccumulator
 
             if (_text.Length > _maxChars)
             {
-                _text = _text[^_maxChars..];
+                var start = _text.Length - _maxChars;
+                if (char.IsLowSurrogate(_text[start])) start++; // never split a surrogate pair
+                _text = _text[start..];
             }
         }
     }

@@ -88,9 +88,14 @@ public sealed class LiveTranslateClient : IDisposable
             var setup = BuildSetupMessage(config.ModelId, config.TargetLanguageCode, config.EchoTargetLanguage);
             await socket.SendAsync(Encoding.UTF8.GetBytes(setup), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ReferenceEquals(_socket, socket))
+        catch (Exception ex)
         {
-            SetState(LiveConnectionState.Failed, $"Connection failed: {Simplify(ex)}");
+            // Must never escape: a concurrent CloseAsync can null _socket while ConnectAsync
+            // is pending, and callers await this from async-void command contexts.
+            if (ReferenceEquals(_socket, socket))
+            {
+                SetState(LiveConnectionState.Failed, $"Connection failed: {Simplify(ex)}");
+            }
             return;
         }
 
@@ -161,7 +166,7 @@ public sealed class LiveTranslateClient : IDisposable
                     case LiveConnectionState.Closed:
                         return (false, FailureMessage ?? "Connection closed before setup completed.");
                 }
-                await Task.Delay(100).ConfigureAwait(false);
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
             return State == LiveConnectionState.Connecting
@@ -427,7 +432,9 @@ public sealed class LiveTranslateClient : IDisposable
         var key = apiKey.Trim();
         if (Regex.IsMatch(cleaned, @"[?&]key=", RegexOptions.IgnoreCase))
         {
-            return Regex.Replace(cleaned, @"([?&]key=)[^&]*", "${1}" + key, RegexOptions.IgnoreCase);
+            // $ in the key would otherwise be interpreted as a regex substitution sequence.
+            var safeKey = key.Replace("$", "$$");
+            return Regex.Replace(cleaned, @"([?&]key=)[^&]*", "${1}" + safeKey, RegexOptions.IgnoreCase);
         }
         return cleaned + (cleaned.Contains('?') ? "&" : "?") + "key=" + key;
     }

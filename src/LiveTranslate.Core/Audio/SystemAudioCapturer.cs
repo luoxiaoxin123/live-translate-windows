@@ -19,6 +19,9 @@ public sealed class SystemAudioCapturer : IDisposable
     /// <summary>Classic-loopback anti-feedback gate: return true to drop the current chunk.</summary>
     public Func<bool>? ShouldMuteOutgoing { get; set; }
 
+    /// <summary>Raised (from an audio thread) when capture dies mid-session, e.g. device removed.</summary>
+    public Action<string>? OnCaptureError { get; set; }
+
     public bool UsingProcessExclude { get; private set; }
 
     public bool IsRunning { get; private set; }
@@ -30,7 +33,13 @@ public sealed class SystemAudioCapturer : IDisposable
 
         try
         {
-            var capturer = new ProcessExcludeLoopbackCapturer();
+            var capturer = new ProcessExcludeLoopbackCapturer
+            {
+                OnFatalError = message =>
+                {
+                    if (IsRunning) OnCaptureError?.Invoke(message);
+                },
+            };
             capturer.Start(pcm => _onPcm16k?.Invoke(pcm));
             _processExclude = capturer;
             UsingProcessExclude = true;
@@ -49,7 +58,13 @@ public sealed class SystemAudioCapturer : IDisposable
         var format = classic.WaveFormat;
         _classicResampler = format.SampleRate == 16000 ? null : new PcmResampler(format.SampleRate, 16000);
         classic.DataAvailable += OnClassicData;
-        classic.RecordingStopped += (_, _) => { };
+        classic.RecordingStopped += (_, e) =>
+        {
+            if (e.Exception != null && IsRunning)
+            {
+                OnCaptureError?.Invoke(e.Exception.Message);
+            }
+        };
         classic.StartRecording();
         _classic = classic;
     }

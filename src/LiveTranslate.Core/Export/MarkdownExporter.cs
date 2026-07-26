@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -14,7 +15,7 @@ public static class MarkdownExporter
         var sb = new StringBuilder();
         sb.AppendLine("# 翻译结果");
         sb.AppendLine();
-        sb.AppendLine($"- 停止时间：`{stoppedAt:yyyy-MM-dd HH:mm}`");
+        sb.AppendLine($"- 停止时间：`{stoppedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}`");
         sb.AppendLine();
         sb.AppendLine("## 原文");
         sb.AppendLine();
@@ -28,7 +29,7 @@ public static class MarkdownExporter
 
     /// <summary>File name like 7月26日-14.30-翻译结果.md — a dot instead of the colon NTFS forbids.</summary>
     public static string FileName(DateTime stoppedAt) =>
-        $"{stoppedAt.Month}月{stoppedAt.Day}日-{stoppedAt:HH.mm}-翻译结果.md";
+        $"{stoppedAt.Month}月{stoppedAt.Day}日-{stoppedAt.ToString("HH.mm", CultureInfo.InvariantCulture)}-翻译结果.md";
 
     /// <summary>Writes the content into Downloads (unique name on collision); returns the full path.</summary>
     public static string SaveToDownloads(string content, DateTime stoppedAt, string? downloadsDirectory = null)

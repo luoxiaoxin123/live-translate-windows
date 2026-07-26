@@ -22,7 +22,8 @@
                 PointerPressed="Grabber_PointerPressed"
                 PointerMoved="Grabber_PointerMoved"
                 PointerReleased="Grabber_PointerReleased"
-                PointerCanceled="Grabber_PointerReleased">
+                PointerCanceled="Grabber_PointerReleased"
+                PointerCaptureLost="Grabber_PointerReleased">
                 <Border
                     Width="48"
                     Height="4"
@@ -80,7 +81,8 @@
             PointerPressed="ResizeHandle_PointerPressed"
             PointerMoved="ResizeHandle_PointerMoved"
             PointerReleased="ResizeHandle_PointerReleased"
-            PointerCanceled="ResizeHandle_PointerReleased">
+            PointerCanceled="ResizeHandle_PointerReleased"
+            PointerCaptureLost="ResizeHandle_PointerReleased">
             <Path
                 Margin="0,0,5,5"
                 HorizontalAlignment="Right"

@@ -216,11 +216,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var endpointValue = Endpoint.Trim();
         var modelValue = ModelId.Trim();
-        _settings.Update(s => s with
+        var persisted = _settings.Update(s => s with
         {
             Endpoint = endpointValue.Length > 0 ? endpointValue : UserSettings.DefaultEndpoint,
             ModelId = modelValue.Length > 0 ? modelValue : UserSettings.DefaultModelId,
         });
+        // Blank fields fall back to defaults — reflect what was actually persisted in the UI.
+        Endpoint = persisted.Endpoint;
+        ModelId = persisted.ModelId;
 
         try
         {

@@ -25,6 +25,9 @@ public sealed class ProcessExcludeLoopbackCapturer : IDisposable
 
     public bool IsRunning { get; private set; }
 
+    /// <summary>Invoked once from the capture thread if the stream dies and cannot recover.</summary>
+    public Action<string>? OnFatalError { get; set; }
+
     /// <summary>Starts capture; throws if process-loopback activation fails (caller falls back).</summary>
     public void Start(Action<byte[]> onPcm16k)
     {
@@ -138,16 +141,36 @@ public sealed class ProcessExcludeLoopbackCapturer : IDisposable
         var mono = new short[CaptureRate / 5];
         var raw = Array.Empty<byte>();
 
+        var consecutiveFailures = 0;
         while (!_stopping)
         {
             bufferEvent.WaitOne(200);
             while (!_stopping)
             {
                 var hr = captureClient.GetNextPacketSize(out var packetFrames);
-                if (hr < 0 || packetFrames == 0) break;
+                if (hr < 0)
+                {
+                    // ~25 failed wakeups ≈ 5 s of a dead stream (audio service restart etc.) — give up loudly.
+                    if (++consecutiveFailures > 25)
+                    {
+                        try { OnFatalError?.Invoke($"system audio stream failed (0x{hr:X8})"); } catch { }
+                        return;
+                    }
+                    break;
+                }
+                consecutiveFailures = 0;
+                if (packetFrames == 0) break;
 
                 hr = captureClient.GetBuffer(out var dataPtr, out var frames, out var flags, out _, out _);
-                if (hr < 0) break;
+                if (hr < 0)
+                {
+                    if (++consecutiveFailures > 25)
+                    {
+                        try { OnFatalError?.Invoke($"system audio stream failed (0x{hr:X8})"); } catch { }
+                        return;
+                    }
+                    break;
+                }
 
                 try
                 {

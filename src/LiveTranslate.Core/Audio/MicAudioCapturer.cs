@@ -15,6 +15,9 @@ public sealed class MicAudioCapturer : IDisposable
 
     public bool IsRunning { get; private set; }
 
+    /// <summary>Raised (from an audio thread) when the mic dies mid-session, e.g. device removed.</summary>
+    public Action<string>? OnCaptureError { get; set; }
+
     public void Start(Action<byte[]> onPcm16k)
     {
         Stop();
@@ -36,6 +39,7 @@ public sealed class MicAudioCapturer : IDisposable
             NumberOfBuffers = 4,
         };
         waveIn.DataAvailable += OnDataAvailable;
+        waveIn.RecordingStopped += OnRecordingStopped;
         try
         {
             waveIn.StartRecording();
@@ -44,6 +48,7 @@ public sealed class MicAudioCapturer : IDisposable
         catch
         {
             waveIn.DataAvailable -= OnDataAvailable;
+            waveIn.RecordingStopped -= OnRecordingStopped;
             waveIn.Dispose();
             return null;
         }
@@ -76,6 +81,14 @@ public sealed class MicAudioCapturer : IDisposable
         }
     }
 
+    private void OnRecordingStopped(object? sender, StoppedEventArgs e)
+    {
+        if (e.Exception != null && IsRunning)
+        {
+            OnCaptureError?.Invoke(e.Exception.Message);
+        }
+    }
+
     public void Stop()
     {
         IsRunning = false;
@@ -85,6 +98,7 @@ public sealed class MicAudioCapturer : IDisposable
         if (waveIn != null)
         {
             waveIn.DataAvailable -= OnDataAvailable;
+            waveIn.RecordingStopped -= OnRecordingStopped;
             try { waveIn.StopRecording(); } catch { }
             waveIn.Dispose();
         }

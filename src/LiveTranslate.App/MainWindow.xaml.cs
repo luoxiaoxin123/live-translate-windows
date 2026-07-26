@@ -16,6 +16,9 @@ public sealed partial class MainWindow : WindowEx
         SubtitlesItem.Content = L.NavSubtitles;
         SettingsItem.Content = L.NavSettings;
 
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+        if (File.Exists(iconPath)) AppWindow.SetIcon(iconPath);
+
         this.SetWindowSize(960, 700);
         this.CenterOnScreen();
 

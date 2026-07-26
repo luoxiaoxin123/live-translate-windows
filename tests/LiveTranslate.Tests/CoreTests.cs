@@ -76,6 +76,12 @@ public class LiveProtocolTests
     {
         Assert.Equal("wss://host/path?key=***&b=2", LiveTranslateClient.RedactKey("wss://host/path?key=SECRET&b=2"));
     }
+
+    [Fact]
+    public void BuildUrl_KeyWithDollarSignsSurvivesReplacement()
+    {
+        Assert.Equal("wss://host/path?key=sk$1$&abc&b=2", LiveTranslateClient.BuildUrl("wss://host/path?key=OLD&b=2", "sk$1$&abc"));
+    }
 }
 
 public class AudioDspTests
@@ -132,6 +138,22 @@ public class AudioDspTests
         Assert.Equal(4, mixed.Count);
         Assert.Equal(2000, BitConverter.ToInt16(mixed.ToArray(), 0));
         Assert.Equal(0, BitConverter.ToInt16(mixed.ToArray(), 2));
+    }
+
+    [Fact]
+    public async Task Mixer_PassesMicThroughWhenMediaGoesSilent()
+    {
+        var mixed = new List<byte>();
+        var mixer = new PcmMixer(bytes => mixed.AddRange(bytes));
+
+        // Media never produces anything (e.g. paused video). After the stale window,
+        // mic audio must flow through instead of being dropped.
+        await Task.Delay(600);
+        mixer.OfferMic(PcmBytes(111, 222, 333));
+
+        Assert.Equal(6, mixed.Count);
+        Assert.Equal(111, BitConverter.ToInt16(mixed.ToArray(), 0));
+        Assert.Equal(333, BitConverter.ToInt16(mixed.ToArray(), 4));
     }
 
     [Fact]
@@ -207,6 +229,15 @@ public class TranscriptAccumulatorTests
         var acc = new TranscriptAccumulator(10);
         acc.Append("0123456789ABCDEF");
         Assert.Equal("6789ABCDEF", acc.Text);
+    }
+
+    [Fact]
+    public void CapTrim_NeverSplitsSurrogatePairs()
+    {
+        var acc = new TranscriptAccumulator(3);
+        acc.Append("ab\U0001F600cd"); // emoji is a surrogate pair straddling the cap boundary
+        Assert.Equal("cd", acc.Text);
+        Assert.False(char.IsLowSurrogate(acc.Text[0]));
     }
 }
 

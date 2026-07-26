@@ -14,11 +14,12 @@
         </Style>
     </Page.Resources>
 
-    <ScrollViewer>
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
         <StackPanel
             Margin="28,20,28,28"
+            MinWidth="560"
             MaxWidth="820"
-            HorizontalAlignment="Stretch"
+            HorizontalAlignment="Left"
             Spacing="12">
 
             <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="{x:Bind loc:L.SubtitlePageTitle}" />
@@ -78,6 +79,7 @@
                 <StackPanel Spacing="8">
                     <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind loc:L.AudioSource}" />
                     <RadioButtons
+                        HorizontalAlignment="Left"
                         IsEnabled="{x:Bind Vm.CanEditSession, Mode=OneWay}"
                         ItemsSource="{x:Bind Vm.AudioSources}"
                         SelectedIndex="{x:Bind Vm.AudioSourceIndex, Mode=TwoWay}" />

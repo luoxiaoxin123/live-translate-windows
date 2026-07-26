@@ -120,7 +120,7 @@ public sealed partial class SubtitleViewModel : ObservableObject
 
     partial void OnAudioSourceIndexChanged(int value)
     {
-        if (_initializing) return;
+        if (_initializing || value < 0) return;
         var mode = value switch
         {
             1 => AudioSourceMode.Mic,
