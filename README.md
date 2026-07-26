@@ -45,7 +45,6 @@ powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 
 ```text
 实时翻译.exe    ← 双击这个启动（内置图标的小启动器）
-使用说明.txt
 app\            ← 程序本体（自包含，无需装 .NET）
 ```
 

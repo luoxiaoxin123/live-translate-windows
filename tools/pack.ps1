@@ -1,8 +1,7 @@
-# Builds the distributable zip:
+# Builds the distributable zip (root holds exactly two entries):
 #   LiveTranslate-win-x64.zip
-#   ├─ 实时翻译.exe   ← tiny launcher (obvious entry point)
-#   ├─ 使用说明.txt
-#   └─ app\           ← self-contained publish output
+#   ├─ 实时翻译.exe   ← tiny launcher (the obvious thing to double-click)
+#   └─ app\           ← self-contained publish output (+ 使用说明.txt)
 # Run from the repo root:  powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 
 $ErrorActionPreference = 'Stop'
@@ -22,7 +21,7 @@ New-Item -ItemType Directory dist | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'launcher build failed' }
 
 Copy-Item publish\win-x64 dist\app -Recurse
-Copy-Item tools\使用说明.txt dist\
+Copy-Item tools\使用说明.txt dist\app\
 
 # Compress-Archive (not tar): it stores non-ASCII entry names with the UTF-8 flag,
 # so 实时翻译.exe extracts correctly on any system locale.
