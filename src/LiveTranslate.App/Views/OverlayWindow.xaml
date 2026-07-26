@@ -1,0 +1,93 @@
+<winuiex:WindowEx
+    x:Class="LiveTranslate.App.Views.OverlayWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:winuiex="using:WinUIEx">
+
+    <Grid Background="Transparent">
+        <Border x:Name="Bg" Background="Black" CornerRadius="12" Opacity="0.65" />
+
+        <Grid Margin="12,0,12,10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="22" />
+                <RowDefinition x:Name="SourceRowDef" Height="0" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border
+                x:Name="Grabber"
+                Grid.Row="0"
+                Background="Transparent"
+                PointerPressed="Grabber_PointerPressed"
+                PointerMoved="Grabber_PointerMoved"
+                PointerReleased="Grabber_PointerReleased"
+                PointerCanceled="Grabber_PointerReleased">
+                <Border
+                    Width="48"
+                    Height="4"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#73FFFFFF"
+                    CornerRadius="2" />
+            </Border>
+
+            <ScrollViewer
+                x:Name="SourceScroll"
+                Grid.Row="1"
+                HorizontalScrollBarVisibility="Disabled"
+                IsTabStop="False"
+                VerticalScrollBarVisibility="Hidden"
+                Visibility="Collapsed">
+                <TextBlock
+                    x:Name="SourceText"
+                    Foreground="#C7FFFFFF"
+                    IsTextSelectionEnabled="False"
+                    SizeChanged="SourceText_SizeChanged"
+                    TextWrapping="Wrap" />
+            </ScrollViewer>
+
+            <Rectangle
+                x:Name="Divider"
+                Grid.Row="2"
+                Height="1"
+                Margin="2,4"
+                Fill="#45FFFFFF"
+                Visibility="Collapsed" />
+
+            <ScrollViewer
+                x:Name="TranslationScroll"
+                Grid.Row="3"
+                HorizontalScrollBarVisibility="Disabled"
+                IsTabStop="False"
+                VerticalScrollBarVisibility="Hidden">
+                <TextBlock
+                    x:Name="TranslationText"
+                    Foreground="White"
+                    IsTextSelectionEnabled="False"
+                    SizeChanged="TranslationText_SizeChanged"
+                    TextWrapping="Wrap" />
+            </ScrollViewer>
+        </Grid>
+
+        <Border
+            x:Name="ResizeHandle"
+            Width="24"
+            Height="24"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Background="Transparent"
+            PointerPressed="ResizeHandle_PointerPressed"
+            PointerMoved="ResizeHandle_PointerMoved"
+            PointerReleased="ResizeHandle_PointerReleased"
+            PointerCanceled="ResizeHandle_PointerReleased">
+            <Path
+                Margin="0,0,5,5"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Data="M 0,12 L 12,0 M 5,13 L 13,5 M 10,14 L 14,10"
+                Stroke="#88FFFFFF"
+                StrokeThickness="1.5" />
+        </Border>
+    </Grid>
+</winuiex:WindowEx>

@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/LiveTranslate.App/LiveTranslate.App.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/LiveTranslate.Core/LiveTranslate.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">

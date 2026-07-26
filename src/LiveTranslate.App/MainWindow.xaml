@@ -1,0 +1,30 @@
+<winuiex:WindowEx
+    x:Class="LiveTranslate.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:winuiex="using:WinUIEx"
+    MinWidth="720"
+    MinHeight="560">
+
+    <NavigationView
+        x:Name="Nav"
+        IsBackButtonVisible="Collapsed"
+        IsSettingsVisible="False"
+        PaneDisplayMode="LeftCompact"
+        SelectionChanged="Nav_SelectionChanged">
+        <NavigationView.MenuItems>
+            <NavigationViewItem x:Name="SubtitlesItem" Tag="subtitles">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xED1E;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="SettingsItem" Tag="settings">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE713;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.MenuItems>
+
+        <Frame x:Name="ContentFrame" />
+    </NavigationView>
+</winuiex:WindowEx>
