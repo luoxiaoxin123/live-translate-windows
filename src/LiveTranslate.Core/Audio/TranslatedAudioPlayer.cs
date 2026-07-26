@@ -45,6 +45,7 @@ public sealed partial class TranslatedAudioPlayer : IDisposable
         get
         {
             if (!_enabled) return false;
+            if (_queue.Reader.Count > 0) return true; // queued but not yet written is still "about to be audible"
             lock (_deviceLock)
             {
                 if ((_provider?.BufferedBytes ?? 0) > 0) return true;

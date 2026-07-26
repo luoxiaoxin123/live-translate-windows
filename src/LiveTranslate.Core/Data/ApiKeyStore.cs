@@ -49,10 +49,13 @@ public sealed class ApiKeyStore
                 var tempPath = _filePath + ".tmp";
                 File.WriteAllBytes(tempPath, encrypted);
                 File.Move(tempPath, _filePath, overwrite: true);
-            }
-            finally
-            {
                 _cache = cleaned;
+            }
+            catch
+            {
+                // Persist failed — drop the cache so reads reflect what is actually on disk.
+                _cache = null;
+                throw;
             }
         }
     }

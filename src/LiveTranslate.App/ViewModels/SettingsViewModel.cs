@@ -148,15 +148,20 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void SaveKeys()
     {
-        PersistApiSettings();
-        TestResult = L.Saved;
+        TestResult = PersistApiSettings(out var error) ? L.Saved : L.SaveFailed(error);
     }
 
-    [RelayCommand]
-    private async Task SaveAndTestAsync()
+    [RelayCommand(IncludeCancelCommand = true)]
+    private async Task SaveAndTestAsync(CancellationToken cancellationToken)
     {
-        PersistApiSettings();
+        if (!PersistApiSettings(out var error))
+        {
+            TestResult = L.SaveFailed(error);
+            return;
+        }
+
         IsTesting = true;
+        var lines = new List<string>();
         try
         {
             var keys = ApiKeys.Select(k => k.Value.Trim()).Where(k => k.Length > 0).ToList();
@@ -167,7 +172,6 @@ public sealed partial class SettingsViewModel : ObservableObject
             }
 
             var settings = _settings.Current;
-            var lines = new List<string>();
             var ok = 0;
             for (var i = 0; i < keys.Count; i++)
             {
@@ -181,7 +185,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
                 using var client = new LiveTranslateClient();
                 var (success, message) = await client.TestConnectionAsync(new SessionConfig(
-                    settings.Endpoint, keys[i], settings.ModelId, settings.TargetLanguageCode));
+                    settings.Endpoint, keys[i], settings.ModelId, settings.TargetLanguageCode),
+                    cancellationToken: cancellationToken);
                 if (success)
                 {
                     ok++;
@@ -196,13 +201,18 @@ public sealed partial class SettingsViewModel : ObservableObject
             lines.Add(L.TestSummary(ok, keys.Count));
             TestResult = string.Join("\n", lines);
         }
+        catch (OperationCanceledException)
+        {
+            lines.Add(L.TestCancelled);
+            TestResult = string.Join("\n", lines);
+        }
         finally
         {
             IsTesting = false;
         }
     }
 
-    private void PersistApiSettings()
+    private bool PersistApiSettings(out string error)
     {
         var endpointValue = Endpoint.Trim();
         var modelValue = ModelId.Trim();
@@ -211,7 +221,18 @@ public sealed partial class SettingsViewModel : ObservableObject
             Endpoint = endpointValue.Length > 0 ? endpointValue : UserSettings.DefaultEndpoint,
             ModelId = modelValue.Length > 0 ? modelValue : UserSettings.DefaultModelId,
         });
-        _keys.SaveKeys(ApiKeys.Select(k => k.Value));
+
+        try
+        {
+            _keys.SaveKeys(ApiKeys.Select(k => k.Value));
+            error = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
     }
 
     // ---- appearance ----

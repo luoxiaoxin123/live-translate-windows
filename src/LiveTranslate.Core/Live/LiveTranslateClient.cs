@@ -115,6 +115,10 @@ public sealed class LiveTranslateClient : IDisposable
         _sendQueue?.Writer.TryComplete();
         _sendQueue = null;
 
+        // Cancel first so the receive/send loops exit via cancellation instead of
+        // observing a disposed socket (which could surface as a spurious failure).
+        cts?.Cancel();
+
         if (socket != null)
         {
             try
@@ -130,16 +134,16 @@ public sealed class LiveTranslateClient : IDisposable
             }
         }
 
-        cts?.Cancel();
         socket?.Dispose();
-        cts?.Dispose();
+        // The CTS is deliberately not disposed here: the loops may still hold its token,
+        // and a timer-less CTS holds no scarce resources.
     }
 
     /// <summary>
     /// Connects and polls the connection state (events could fire before a subscriber attaches,
     /// so state polling is the reliable signal). Always closes the session afterwards.
     /// </summary>
-    public async Task<(bool Ok, string Message)> TestConnectionAsync(SessionConfig config, int timeoutMs = 25000)
+    public async Task<(bool Ok, string Message)> TestConnectionAsync(SessionConfig config, int timeoutMs = 25000, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -147,6 +151,7 @@ public sealed class LiveTranslateClient : IDisposable
             var deadline = Environment.TickCount64 + timeoutMs;
             while (Environment.TickCount64 < deadline)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 switch (State)
                 {
                     case LiveConnectionState.Ready:

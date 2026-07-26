@@ -30,6 +30,8 @@ public sealed partial class OverlayWindow : WindowEx
 
     private int _sourceLines;
     private int _translationLines;
+    private bool _sourceTextDirty;
+    private bool _translationTextDirty;
 
     public OverlayWindow(UserSettingsRepository settings)
     {
@@ -69,8 +71,16 @@ public sealed partial class OverlayWindow : WindowEx
 
     public void SetTexts(string source, string translation)
     {
-        if (SourceText.Text != source) SourceText.Text = source;
-        if (TranslationText.Text != translation) TranslationText.Text = translation;
+        if (SourceText.Text != source)
+        {
+            _sourceTextDirty = true;
+            SourceText.Text = source;
+        }
+        if (TranslationText.Text != translation)
+        {
+            _translationTextDirty = true;
+            TranslationText.Text = translation;
+        }
     }
 
     public void ApplyAppearance(UserSettings settings)
@@ -215,22 +225,29 @@ public sealed partial class OverlayWindow : WindowEx
     // ---- autoscroll: only when the wrapped line count grows ----
 
     private void SourceText_SizeChanged(object sender, SizeChangedEventArgs e) =>
-        AutoScroll(SourceScroll, SourceText.ActualHeight, SourceText.LineHeight, ref _sourceLines);
+        AutoScroll(SourceScroll, SourceText.ActualHeight, SourceText.LineHeight, ref _sourceLines, ref _sourceTextDirty);
 
     private void TranslationText_SizeChanged(object sender, SizeChangedEventArgs e) =>
-        AutoScroll(TranslationScroll, TranslationText.ActualHeight, TranslationText.LineHeight, ref _translationLines);
+        AutoScroll(TranslationScroll, TranslationText.ActualHeight, TranslationText.LineHeight, ref _translationLines, ref _translationTextDirty);
 
-    private static void AutoScroll(Microsoft.UI.Xaml.Controls.ScrollViewer viewer, double actualHeight, double lineHeight, ref int lastLines)
+    private static void AutoScroll(Microsoft.UI.Xaml.Controls.ScrollViewer viewer, double actualHeight, double lineHeight, ref int lastLines, ref bool textDirty)
     {
         if (lineHeight <= 0) return;
         var lines = (int)Math.Round(actualHeight / lineHeight);
-        if (lines > lastLines)
+
+        // SizeChanged also fires when the window is resized and the text re-wraps;
+        // only a text update may scroll — a pure resize just re-baselines the counter.
+        if (textDirty)
         {
-            viewer.ChangeView(null, viewer.ExtentHeight, null, disableAnimation: false);
-        }
-        else if (lines < lastLines)
-        {
-            viewer.ChangeView(null, 0, null, disableAnimation: true);
+            if (lines > lastLines)
+            {
+                viewer.ChangeView(null, viewer.ExtentHeight, null, disableAnimation: false);
+            }
+            else if (lines < lastLines)
+            {
+                viewer.ChangeView(null, 0, null, disableAnimation: true);
+            }
+            textDirty = false;
         }
         lastLines = lines;
     }

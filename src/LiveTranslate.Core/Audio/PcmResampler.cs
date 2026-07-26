@@ -34,7 +34,8 @@ public sealed class PcmResampler
             return direct;
         }
 
-        var estimated = (int)(count / _step) + 2;
+        // _position can be negative (carried from the previous chunk), which adds output samples.
+        var estimated = (int)Math.Ceiling((count - _position) / _step) + 2;
         var output = new byte[estimated * 2];
         var written = 0;
 

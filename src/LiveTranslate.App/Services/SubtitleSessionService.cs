@@ -80,6 +80,18 @@ public sealed class SubtitleSessionService
         }
     }
 
+    private static void RotateLogIfLarge()
+    {
+        try
+        {
+            var info = new FileInfo(LogPath);
+            if (info.Exists && info.Length > 256 * 1024) info.Delete();
+        }
+        catch
+        {
+        }
+    }
+
     public async Task StartAsync()
     {
         if (IsActive) return;
@@ -101,6 +113,7 @@ public sealed class SubtitleSessionService
         _captureStarted = false;
         _loggedInputs = 0;
         _loggedOutputs = 0;
+        RotateLogIfLarge();
 
         var settings = _settings.Current;
         SetStatus(SessionStatus.Starting, "");
@@ -137,15 +150,26 @@ public sealed class SubtitleSessionService
             settings.TargetLanguageCode));
     }
 
+    private bool _finalizing;
+
     public async Task StopAsync()
     {
         if (Status is SessionStatus.Idle or SessionStatus.Stopped) return;
-        await TearDownAsync();
+        if (_finalizing) return;
+        _finalizing = true;
+        try
+        {
+            await TearDownAsync();
 
-        LastInputFull = _fullInput.Text;
-        LastOutputFull = _fullOutput.Text;
-        CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
-        SetStatus(SessionStatus.Stopped, "");
+            LastInputFull = _fullInput.Text;
+            LastOutputFull = _fullOutput.Text;
+            CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
+            SetStatus(SessionStatus.Stopped, "");
+        }
+        finally
+        {
+            _finalizing = false;
+        }
     }
 
     public async Task ShutdownAsync()
@@ -194,11 +218,21 @@ public sealed class SubtitleSessionService
 
     private async Task FailSessionAsync(string message)
     {
-        await TearDownAsync();
-        LastInputFull = _fullInput.Text;
-        LastOutputFull = _fullOutput.Text;
-        CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
-        SetStatus(SessionStatus.Error, message);
+        // A manual Stop may already be finalizing on this (UI) thread — don't fight over the final status.
+        if (_finalizing) return;
+        _finalizing = true;
+        try
+        {
+            await TearDownAsync();
+            LastInputFull = _fullInput.Text;
+            LastOutputFull = _fullOutput.Text;
+            CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
+            SetStatus(SessionStatus.Error, message);
+        }
+        finally
+        {
+            _finalizing = false;
+        }
     }
 
     private void StartCapturePipeline(LiveTranslateClient client)

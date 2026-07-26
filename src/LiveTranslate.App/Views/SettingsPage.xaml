@@ -79,6 +79,10 @@
                             Content="{x:Bind loc:L.SaveAndTest}"
                             Style="{StaticResource AccentButtonStyle}" />
                         <Button Command="{x:Bind Vm.SaveKeysCommand}" Content="{x:Bind loc:L.SaveKeys}" />
+                        <Button
+                            Command="{x:Bind Vm.SaveAndTestCancelCommand}"
+                            Content="{x:Bind loc:L.Cancel}"
+                            Visibility="{x:Bind Vm.IsTesting, Mode=OneWay}" />
                         <ProgressRing
                             Width="20"
                             Height="20"

@@ -62,6 +62,9 @@ public static class L
     public static string KeyTooShort => T("Key 太短（少于 16 个字符）", "Key too short (under 16 characters)");
     public static string KeyOk => T("✅ 可用", "✅ OK");
     public static string Saved => T("已保存", "Saved");
+    public static string SaveFailed(string reason) => T($"保存失败：{reason}", $"Save failed: {reason}");
+    public static string Cancel => T("取消", "Cancel");
+    public static string TestCancelled => T("已取消测试", "Test cancelled");
 
     public static string SectionAppearance => T("字幕外观", "Subtitle appearance");
     public static string FontSizeLabel => T("字号", "Font size");
