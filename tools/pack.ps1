@@ -1,7 +1,8 @@
-# Builds the distributable zip (root holds exactly two entries):
+# Builds the distributable zip:
 #   LiveTranslate-win-x64.zip
 #   ├─ 实时翻译.exe   ← tiny launcher (the obvious thing to double-click)
-#   └─ app\           ← self-contained publish output (+ 使用说明.txt)
+#   ├─ 使用说明.txt
+#   └─ app\           ← self-contained publish output
 # Run from the repo root:  powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 
 $ErrorActionPreference = 'Stop'
