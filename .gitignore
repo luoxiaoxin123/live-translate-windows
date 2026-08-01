@@ -4,6 +4,7 @@ publish/
 *.user
 .vs/
 .idea/
+.claude/
 *.binlog
 dist/
 *.zip

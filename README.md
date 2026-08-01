@@ -2,6 +2,8 @@
 
 [简体中文](README.zh-CN.md)
 
+Android version: [Live Translate for Android](https://github.com/luoxiaoxin123/live-translate)
+
 A **real-time subtitle** app for Windows with a native WinUI 3 interface, powered by [Google Gemini Live Translate](https://ai.google.dev/gemini-api/docs/live-api/live-translate) (model `gemini-3.5-live-translate-preview`). It captures **what your PC is playing**, the **microphone**, or both mixed, streams the audio to the Live Translate API, and shows the translation in a **draggable, resizable always-on-top floating subtitle window** — optionally speaking the translation out loud alongside the original audio. After stopping, the session can be exported as Markdown.
 
 ## Features
