@@ -48,22 +48,6 @@ dotnet test  LiveTranslate.slnx            # 单元测试
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
 ```
 
-### 你自己发新版本
-
-```powershell
-# 需要 Inno Setup 6：  winget install JRSoftware.InnoSetup
-pwsh -File tools\pack.ps1
-```
-
-会生成 `LiveTranslate-Setup-x64.exe`。正式发版时打一个 `v*` 标签并推上去（或在 GitHub 上用该标签发布 Release）。**Release** 工作流会按标签写入设置页「关于」里的版本号、打安装包，并挂到对应 Release：
-
-```powershell
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-另外还会打一份免安装的 `LiveTranslate-win-x64.zip`，给不想跑安装程序的人。
-
 ## 使用
 
 1. 打开应用 → **设置** → 填入一个或多个 API Key → **保存并测试连接**

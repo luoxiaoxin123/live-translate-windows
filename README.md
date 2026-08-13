@@ -48,22 +48,6 @@ dotnet test  LiveTranslate.slnx            # unit tests
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
 ```
 
-### Publishing a release
-
-```powershell
-# needs Inno Setup 6:  winget install JRSoftware.InnoSetup
-pwsh -File tools\pack.ps1
-```
-
-That builds `LiveTranslate-Setup-x64.exe`. The usual way to ship it is to create and push a version tag (or publish a GitHub Release with that tag). The **Release** workflow then stamps the Settings “About” version from the tag, builds the installer, and attaches it to the Release:
-
-```powershell
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-A portable zip (`LiveTranslate-win-x64.zip`) is still produced for people who prefer not to run a setup program.
-
 ## Usage
 
 1. Open the app → **Settings** → enter one or more API keys → **Save and test connection**
