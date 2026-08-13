@@ -7,6 +7,17 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- WinUI TextBox drag-select is expensive (microsoft-ui-xaml#9498).
+                 Turn off the extra input services that run on every selection change. -->
+            <Style BasedOn="{StaticResource DefaultTextBoxStyle}" TargetType="TextBox">
+                <Setter Property="IsSpellCheckEnabled" Value="False" />
+                <Setter Property="IsTextPredictionEnabled" Value="False" />
+                <Setter Property="IsColorFontEnabled" Value="False" />
+            </Style>
+            <Style BasedOn="{StaticResource DefaultPasswordBoxStyle}" TargetType="PasswordBox">
+                <Setter Property="IsPasswordRevealButtonEnabled" Value="False" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

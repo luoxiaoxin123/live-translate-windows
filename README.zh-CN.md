@@ -28,6 +28,15 @@
 - [Google AI Studio](https://aistudio.google.com/) 的 API Key
 - 麦克风模式需要允许桌面应用访问麦克风（系统设置 → 隐私）
 
+## 给普通用户（下载就能用）
+
+1. 打开 [Releases](https://github.com/luoxiaoxin123/live-translate-windows/releases) 页面
+2. 下载 **LiveTranslate-Setup-x64.exe**
+3. 双击安装（不需要管理员权限）
+4. 从桌面或开始菜单打开 **实时翻译**
+
+不用单独装 .NET。若 SmartScreen 提示「已保护你的电脑」：点 **更多信息** → **仍要运行**。
+
 ## 从源码构建
 
 需要 [.NET 10 SDK](https://dotnet.microsoft.com/download)（无需 Visual Studio）：
@@ -39,18 +48,21 @@ dotnet test  LiveTranslate.slnx            # 单元测试
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
 ```
 
-### 发布（self-contained，免装 .NET）
+### 你自己发新版本
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\pack.ps1
+# 需要 Inno Setup 6：  winget install JRSoftware.InnoSetup
+pwsh -File tools\pack.ps1
 ```
 
-产出 `LiveTranslate-win-x64.zip`，结构对接收者友好：
+会生成 `LiveTranslate-Setup-x64.exe`。正式发版时打一个 `v*` 标签并推上去（或在 GitHub 上用该标签发布 Release）。**Release** 工作流会按标签写入设置页「关于」里的版本号、打安装包，并挂到对应 Release：
 
-```text
-实时翻译.exe    ← 双击这个启动（内置图标的小启动器）
-app\            ← 程序本体（自包含，无需装 .NET）
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
 ```
+
+另外还会打一份免安装的 `LiveTranslate-win-x64.zip`，给不想跑安装程序的人。
 
 ## 使用
 

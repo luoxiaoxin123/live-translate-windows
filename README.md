@@ -28,6 +28,15 @@ A **real-time subtitle** app for Windows with a native WinUI 3 interface, powere
 - An API key from [Google AI Studio](https://aistudio.google.com/)
 - Microphone mode needs desktop apps allowed to access the microphone (Settings → Privacy)
 
+## Download (for everyone else)
+
+1. Open the [Releases](https://github.com/luoxiaoxin123/live-translate-windows/releases) page
+2. Download **LiveTranslate-Setup-x64.exe**
+3. Double-click it → Next → install (no administrator account needed)
+4. Open **实时翻译** from the desktop or Start menu
+
+No .NET runtime to install. If SmartScreen says Windows protected your PC: **More info** → **Run anyway**.
+
 ## Building from source
 
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download) (no Visual Studio needed):
@@ -39,19 +48,21 @@ dotnet test  LiveTranslate.slnx            # unit tests
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
 ```
 
-### Packaging (self-contained, no .NET install needed)
+### Publishing a release
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\pack.ps1
+# needs Inno Setup 6:  winget install JRSoftware.InnoSetup
+pwsh -File tools\pack.ps1
 ```
 
-Produces `LiveTranslate-win-x64.zip` with a recipient-friendly layout:
+That builds `LiveTranslate-Setup-x64.exe`. The usual way to ship it is to create and push a version tag (or publish a GitHub Release with that tag). The **Release** workflow then stamps the Settings “About” version from the tag, builds the installer, and attaches it to the Release:
 
-```text
-实时翻译.exe    ← double-click this to launch (small launcher with the app icon)
-使用说明.txt    ← quick-start notes
-app\            ← the app itself (self-contained)
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
 ```
+
+A portable zip (`LiveTranslate-win-x64.zip`) is still produced for people who prefer not to run a setup program.
 
 ## Usage
 

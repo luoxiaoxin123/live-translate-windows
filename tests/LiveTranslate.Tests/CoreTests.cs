@@ -241,6 +241,92 @@ public class TranscriptAccumulatorTests
     }
 }
 
+public class SentenceLineBreakerTests
+{
+    [Fact]
+    public void LongChineseSentence_BreaksAfterIdeographicPeriod()
+    {
+        var text = "这是一句足够长的中文翻译内容。下一句从这里开始";
+        Assert.Equal("这是一句足够长的中文翻译内容。\n下一句从这里开始", SentenceLineBreaker.Format(text, minCharsPerLine: 12));
+    }
+
+    [Fact]
+    public void LongEnglishSentence_BreaksAfterPeriod()
+    {
+        var text = "This is a reasonably long sentence. The next one starts here";
+        Assert.Equal("This is a reasonably long sentence.\nThe next one starts here", SentenceLineBreaker.Format(text, minCharsPerLine: 16));
+    }
+
+    [Fact]
+    public void ShortSentences_StayOnTheSameLine()
+    {
+        Assert.Equal("好的。我知道了。", SentenceLineBreaker.Format("好的。我知道了。", minCharsPerLine: 16));
+        Assert.Equal("OK. I see.", SentenceLineBreaker.Format("OK. I see.", minCharsPerLine: 16));
+    }
+
+    [Fact]
+    public void DecimalPoint_IsNotABreak()
+    {
+        Assert.Equal("The value is 3.14 today.", SentenceLineBreaker.Format("The value is 3.14 today.", minCharsPerLine: 8));
+    }
+
+    [Fact]
+    public void ClosingQuoteStaysOnTheSameLine()
+    {
+        var text = "他说这是一句足够长的话。”下一句";
+        Assert.Equal("他说这是一句足够长的话。”\n下一句", SentenceLineBreaker.Format(text, minCharsPerLine: 8));
+    }
+
+    [Fact]
+    public void EllipsisAndFullwidthTerminators_Break()
+    {
+        Assert.Equal("这是一句足够长的内容…\n下一句", SentenceLineBreaker.Format("这是一句足够长的内容…下一句", minCharsPerLine: 8));
+        Assert.Equal("这是一句足够长的内容！\n下一句", SentenceLineBreaker.Format("这是一句足够长的内容！下一句", minCharsPerLine: 8));
+        Assert.Equal("Wait, this is long enough...\nNext", SentenceLineBreaker.Format("Wait, this is long enough...Next", minCharsPerLine: 8));
+    }
+
+    [Fact]
+    public void TrailingTerminator_DoesNotAddABlankLine()
+    {
+        Assert.Equal("这是一句足够长的中文翻译内容。", SentenceLineBreaker.Format("这是一句足够长的中文翻译内容。", minCharsPerLine: 8));
+    }
+
+    [Fact]
+    public void GrowingStream_IsStable()
+    {
+        const int min = 8;
+        var prefixes = new[]
+        {
+            "这是一句",
+            "这是一句足够长的内容",
+            "这是一句足够长的内容。",
+            "这是一句足够长的内容。下一句也变长了。",
+            "这是一句足够长的内容。下一句也变长了。再往后",
+        };
+
+        string? previous = null;
+        foreach (var prefix in prefixes)
+        {
+            var formatted = SentenceLineBreaker.Format(prefix, min);
+            if (previous != null)
+            {
+                // Newline positions already decided must not move or disappear.
+                var prevLines = previous.Split('\n');
+                var nextLines = formatted.Split('\n');
+                for (var i = 0; i < prevLines.Length - 1; i++)
+                {
+                    Assert.True(i < nextLines.Length);
+                    Assert.Equal(prevLines[i], nextLines[i]);
+                }
+                Assert.StartsWith(prevLines[^1], nextLines[prevLines.Length - 1]);
+            }
+            previous = formatted;
+        }
+
+        Assert.Equal("这是一句足够长的内容。\n下一句也变长了。\n再往后", previous);
+    }
+}
+
 public class MarkdownExporterTests
 {
     [Fact]
@@ -353,6 +439,7 @@ public class DataStoreTests
             Assert.Equal(UserSettings.DefaultEndpoint, repo.Current.Endpoint);
 
             repo.Update(s => s with { TargetLanguageCode = "ja", FontSize = 24, Bilingual = true, AudioSourceMode = AudioSourceMode.MediaAndMic });
+            repo.Flush();
 
             var reloaded = new UserSettingsRepository(path);
             Assert.Equal("ja", reloaded.Current.TargetLanguageCode);

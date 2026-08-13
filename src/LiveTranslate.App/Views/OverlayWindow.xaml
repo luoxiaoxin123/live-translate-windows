@@ -37,8 +37,11 @@
                 x:Name="SourceScroll"
                 Grid.Row="1"
                 HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
                 IsTabStop="False"
+                PointerWheelChanged="SourceScroll_PointerWheelChanged"
                 VerticalScrollBarVisibility="Hidden"
+                VerticalScrollMode="Enabled"
                 Visibility="Collapsed">
                 <TextBlock
                     x:Name="SourceText"
@@ -60,8 +63,11 @@
                 x:Name="TranslationScroll"
                 Grid.Row="3"
                 HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
                 IsTabStop="False"
-                VerticalScrollBarVisibility="Hidden">
+                PointerWheelChanged="TranslationScroll_PointerWheelChanged"
+                VerticalScrollBarVisibility="Hidden"
+                VerticalScrollMode="Enabled">
                 <TextBlock
                     x:Name="TranslationText"
                     Foreground="White"

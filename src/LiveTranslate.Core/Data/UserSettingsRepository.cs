@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace LiveTranslate.Core.Data;
 
@@ -16,9 +17,13 @@ public sealed class UserSettingsRepository
         Converters = { new JsonStringEnumConverter() },
     };
 
+    private const int SaveDebounceMs = 400;
+
     private readonly string _filePath;
     private readonly object _lock = new();
     private UserSettings _current;
+    private UserSettings? _pendingSave;
+    private Timer? _saveTimer;
 
     public event Action<UserSettings>? SettingsChanged;
 
@@ -47,10 +52,36 @@ public sealed class UserSettingsRepository
             updated = mutate(_current);
             if (updated == _current) return updated;
             _current = updated;
-            Save(updated);
+            _pendingSave = updated;
+            _saveTimer ??= new Timer(SaveCallback, null, Timeout.Infinite, Timeout.Infinite);
+            _saveTimer.Change(SaveDebounceMs, Timeout.Infinite);
         }
         SettingsChanged?.Invoke(updated);
         return updated;
+    }
+
+    /// <summary>Writes any debounced change now. Safe to call when nothing is pending.</summary>
+    public void Flush()
+    {
+        UserSettings? toSave;
+        lock (_lock)
+        {
+            _saveTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            toSave = _pendingSave;
+            _pendingSave = null;
+        }
+        if (toSave != null) Save(toSave);
+    }
+
+    private void SaveCallback(object? _)
+    {
+        UserSettings? toSave;
+        lock (_lock)
+        {
+            toSave = _pendingSave;
+            _pendingSave = null;
+        }
+        if (toSave != null) Save(toSave);
     }
 
     private UserSettings Load()

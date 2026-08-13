@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LiveTranslate.App.Localization;
@@ -76,8 +77,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     public partial bool VolumeBoosted { get; set; }
 
-    public string VersionText { get; } =
-        typeof(SettingsViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+    public string VersionText { get; } = ReadVersion();
+
+    private static string ReadVersion()
+    {
+        var assembly = typeof(SettingsViewModel).Assembly;
+        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+');
+            return plus >= 0 ? informational[..plus] : informational;
+        }
+        return assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+    }
 
     public SettingsViewModel(UserSettingsRepository settings, ApiKeyStore keys)
     {
@@ -221,6 +233,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             Endpoint = endpointValue.Length > 0 ? endpointValue : UserSettings.DefaultEndpoint,
             ModelId = modelValue.Length > 0 ? modelValue : UserSettings.DefaultModelId,
         });
+        _settings.Flush();
         // Blank fields fall back to defaults — reflect what was actually persisted in the UI.
         Endpoint = persisted.Endpoint;
         ModelId = persisted.ModelId;

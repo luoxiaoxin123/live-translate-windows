@@ -12,5 +12,12 @@ public sealed partial class SettingsPage : Page
     {
         Vm = App.Services.GetRequiredService<SettingsViewModel>();
         InitializeComponent();
+
+        // Drag-selecting in a TextBox raises BringIntoView on every mouse move.
+        // Let the field scroll itself; don't relayout the whole settings page.
+        BringIntoViewRequested += (_, e) =>
+        {
+            if (e.OriginalSource is TextBox or PasswordBox) e.Handled = true;
+        };
     }
 }

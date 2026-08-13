@@ -15,7 +15,10 @@
         </Style>
     </Page.Resources>
 
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+    <ScrollViewer
+        BringIntoViewOnFocusChange="False"
+        HorizontalScrollBarVisibility="Disabled"
+        HorizontalScrollMode="Disabled">
         <StackPanel
             Margin="28,20,28,28"
             MinWidth="560"
@@ -32,13 +35,16 @@
 
                     <TextBox
                         Header="{x:Bind loc:L.EndpointLabel}"
+                        InputScope="Url"
                         IsSpellCheckEnabled="False"
-                        Text="{x:Bind Vm.Endpoint, Mode=TwoWay}" />
+                        Text="{x:Bind Vm.Endpoint, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                        TextWrapping="Wrap" />
 
                     <TextBox
                         Header="{x:Bind loc:L.ModelLabel}"
                         IsSpellCheckEnabled="False"
-                        Text="{x:Bind Vm.ModelId, Mode=TwoWay}" />
+                        Text="{x:Bind Vm.ModelId, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                        TextWrapping="Wrap" />
 
                     <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind loc:L.ApiKeysLabel}" />
 
@@ -51,7 +57,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <PasswordBox
-                                        Password="{x:Bind Value, Mode=TwoWay}"
+                                        Password="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                         PasswordRevealMode="{x:Bind RevealMode, Mode=OneWay}" />
                                     <Button
                                         Grid.Column="1"

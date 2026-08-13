@@ -8,3 +8,5 @@ publish/
 *.binlog
 dist/
 *.zip
+LiveTranslate-Setup-x64.exe
+LiveTranslate-win-x64/
