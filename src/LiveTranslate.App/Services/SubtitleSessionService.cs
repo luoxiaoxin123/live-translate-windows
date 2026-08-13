@@ -53,8 +53,11 @@ public sealed class SubtitleSessionService
 
     public bool IsActive => Status is SessionStatus.Starting or SessionStatus.Running;
 
-    /// <summary>Raised on the UI thread whenever status/previews change.</summary>
+    /// <summary>Raised on the UI thread whenever status changes.</summary>
     public event Action? StateChanged;
+
+    /// <summary>Raised on the UI thread when caption previews change (not status/buttons).</summary>
+    public event Action? TranscriptChanged;
 
     public SubtitleSessionService(UserSettingsRepository settings, ApiKeyStore keys, DispatcherQueue dispatcher)
     {
@@ -69,6 +72,8 @@ public sealed class SubtitleSessionService
 
     private int _loggedInputs;
     private int _loggedOutputs;
+    private int _transcriptFlushScheduled;
+    private DispatcherQueueTimer? _transcriptTimer;
 
     private static void Log(string message)
     {
@@ -177,6 +182,7 @@ public sealed class SubtitleSessionService
     public async Task ShutdownAsync()
     {
         await TearDownAsync();
+        _settings.Flush();
         Microsoft.UI.Xaml.Application.Current.Exit();
     }
 
@@ -185,7 +191,10 @@ public sealed class SubtitleSessionService
         try
         {
             var stoppedAt = _lastStoppedAt == default ? DateTime.Now : _lastStoppedAt;
-            var markdown = MarkdownExporter.BuildMarkdown(LastInputFull, LastOutputFull, stoppedAt);
+            var markdown = MarkdownExporter.BuildMarkdown(
+                SentenceLineBreaker.Format(LastInputFull),
+                SentenceLineBreaker.Format(LastOutputFull),
+                stoppedAt);
             var path = MarkdownExporter.SaveToDownloads(markdown, stoppedAt);
             return (true, L.ExportedTo(path));
         }
@@ -344,18 +353,46 @@ public sealed class SubtitleSessionService
         var logged = isInput ? Interlocked.Increment(ref _loggedInputs) : Interlocked.Increment(ref _loggedOutputs);
         if (logged is 1 or 10 or 50) Log($"transcript {(isInput ? "in" : "out")} #{logged}: {Tail(text, 60)}");
 
+        ScheduleTranscriptFlush();
+    }
+
+    private void ScheduleTranscriptFlush()
+    {
+        if (Interlocked.CompareExchange(ref _transcriptFlushScheduled, 1, 0) != 0) return;
         _dispatcher.TryEnqueue(() =>
         {
-            if (!ReferenceEquals(_client, client)) return;
-            InputPreview = Tail(_overlayInput.Text, 300);
-            OutputPreview = Tail(_overlayOutput.Text, 300);
-            _overlay?.SetTexts(_overlayInput.Text, _overlayOutput.Text);
-            StateChanged?.Invoke();
+            _transcriptTimer ??= CreateTranscriptTimer();
+            if (!_transcriptTimer.IsRunning) _transcriptTimer.Start();
         });
+    }
+
+    private DispatcherQueueTimer CreateTranscriptTimer()
+    {
+        var timer = _dispatcher.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(50);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) => FlushTranscriptUi();
+        return timer;
+    }
+
+    private void FlushTranscriptUi()
+    {
+        Interlocked.Exchange(ref _transcriptFlushScheduled, 0);
+        _transcriptTimer?.Stop();
+
+        var source = SentenceLineBreaker.Format(_overlayInput.Text);
+        var translation = SentenceLineBreaker.Format(_overlayOutput.Text);
+        InputPreview = Tail(source, 300);
+        OutputPreview = Tail(translation, 300);
+        _overlay?.SetTexts(source, translation);
+        TranscriptChanged?.Invoke();
     }
 
     private async Task TearDownAsync()
     {
+        _transcriptTimer?.Stop();
+        FlushTranscriptUi();
+
         var client = _client;
         _client = null;
 

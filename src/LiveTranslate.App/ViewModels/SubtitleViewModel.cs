@@ -92,6 +92,7 @@ public sealed partial class SubtitleViewModel : ObservableObject
 
         ExportMessage = "";
         _session.StateChanged += RefreshFromSession;
+        _session.TranscriptChanged += RefreshTranscripts;
         RefreshFromSession();
     }
 
@@ -167,9 +168,14 @@ public sealed partial class SubtitleViewModel : ObservableObject
         };
         StatusMessage = _session.StatusMessage;
 
+        RefreshTranscripts();
+        CanExport = _session.CanExport && !_session.IsActive;
+    }
+
+    private void RefreshTranscripts()
+    {
         InputPreview = _session.InputPreview;
         OutputPreview = _session.OutputPreview;
         HasPreview = InputPreview.Length > 0 || OutputPreview.Length > 0;
-        CanExport = _session.CanExport && !_session.IsActive;
     }
 }

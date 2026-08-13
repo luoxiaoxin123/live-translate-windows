@@ -28,6 +28,15 @@
 - [Google AI Studio](https://aistudio.google.com/) 的 API Key
 - 麦克风模式需要允许桌面应用访问麦克风（系统设置 → 隐私）
 
+## 给普通用户（下载就能用）
+
+1. 打开 [Releases](https://github.com/luoxiaoxin123/live-translate-windows/releases) 页面
+2. 下载 **LiveTranslate-Setup-x64.exe**
+3. 双击安装（不需要管理员权限）
+4. 从桌面或开始菜单打开 **实时翻译**
+
+不用单独装 .NET。若 SmartScreen 提示「已保护你的电脑」：点 **更多信息** → **仍要运行**。
+
 ## 从源码构建
 
 需要 [.NET 10 SDK](https://dotnet.microsoft.com/download)（无需 Visual Studio）：
@@ -37,19 +46,6 @@ dotnet build LiveTranslate.slnx            # 构建（Debug x64）
 dotnet test  LiveTranslate.slnx            # 单元测试
 # 运行
 .\src\LiveTranslate.App\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64\LiveTranslate.exe
-```
-
-### 发布（self-contained，免装 .NET）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools\pack.ps1
-```
-
-产出 `LiveTranslate-win-x64.zip`，结构对接收者友好：
-
-```text
-实时翻译.exe    ← 双击这个启动（内置图标的小启动器）
-app\            ← 程序本体（自包含，无需装 .NET）
 ```
 
 ## 使用

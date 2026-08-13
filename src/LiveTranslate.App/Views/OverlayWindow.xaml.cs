@@ -33,6 +33,10 @@ public sealed partial class OverlayWindow : WindowEx
     private bool _sourceTextDirty;
     private bool _translationTextDirty;
 
+    private IntPtr _hwnd;
+    private RectInt32 _workArea;
+    private double _scale;
+
     public OverlayWindow(UserSettingsRepository settings)
     {
         _settings = settings;
@@ -149,16 +153,32 @@ public sealed partial class OverlayWindow : WindowEx
 
     private double GetScale() => GetDpiForWindow(this.GetWindowHandle()) / 96.0;
 
+    private void CachePlacementContext()
+    {
+        _hwnd = this.GetWindowHandle();
+        _workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+        _scale = GetScale();
+    }
+
+    private RectInt32 CurrentRect()
+    {
+        if (_hwnd == IntPtr.Zero) _hwnd = this.GetWindowHandle();
+        if (GetWindowRect(_hwnd, out var native))
+        {
+            return new RectInt32(native.Left, native.Top, native.Right - native.Left, native.Bottom - native.Top);
+        }
+        return new RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+    }
+
     private void SaveGeometry()
     {
-        var position = AppWindow.Position;
-        var size = AppWindow.Size;
+        var rect = CurrentRect();
         _settings.Update(s => s with
         {
-            OverlayX = position.X,
-            OverlayY = position.Y,
-            OverlayWidth = size.Width,
-            OverlayHeight = size.Height,
+            OverlayX = rect.X,
+            OverlayY = rect.Y,
+            OverlayWidth = rect.Width,
+            OverlayHeight = rect.Height,
         });
     }
 
@@ -167,17 +187,24 @@ public sealed partial class OverlayWindow : WindowEx
     private void Grabber_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (!GetCursorPos(out var cursor)) return;
+        CachePlacementContext();
         _dragging = Grabber.CapturePointer(e.Pointer);
         _startPointer = new PointInt32(cursor.X, cursor.Y);
-        _startPosition = AppWindow.Position;
+        var rect = CurrentRect();
+        _startPosition = new PointInt32(rect.X, rect.Y);
     }
 
     private void Grabber_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (!_dragging || !GetCursorPos(out var cursor)) return;
-        AppWindow.Move(new PointInt32(
+        SetWindowPos(
+            _hwnd,
+            IntPtr.Zero,
             _startPosition.X + cursor.X - _startPointer.X,
-            _startPosition.Y + cursor.Y - _startPointer.Y));
+            _startPosition.Y + cursor.Y - _startPointer.Y,
+            0,
+            0,
+            SwpNosize | SwpNozorder | SwpNoactivate);
     }
 
     private void Grabber_PointerReleased(object sender, PointerRoutedEventArgs e)
@@ -185,7 +212,7 @@ public sealed partial class OverlayWindow : WindowEx
         if (!_dragging) return;
         _dragging = false;
         Grabber.ReleasePointerCapture(e.Pointer);
-        var rect = ClampToWorkArea(new RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height));
+        var rect = ClampToWorkArea(CurrentRect());
         AppWindow.MoveAndResize(rect);
         SaveGeometry();
     }
@@ -195,23 +222,26 @@ public sealed partial class OverlayWindow : WindowEx
     private void ResizeHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (!GetCursorPos(out var cursor)) return;
+        CachePlacementContext();
         _resizing = ResizeHandle.CapturePointer(e.Pointer);
         _startPointer = new PointInt32(cursor.X, cursor.Y);
-        _startSize = AppWindow.Size;
+        var rect = CurrentRect();
+        _startPosition = new PointInt32(rect.X, rect.Y);
+        _startSize = new SizeInt32(rect.Width, rect.Height);
     }
 
     private void ResizeHandle_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (!_resizing || !GetCursorPos(out var cursor)) return;
 
-        var scale = GetScale();
-        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
-        var maxWidth = workArea.X + workArea.Width - AppWindow.Position.X;
-        var maxHeight = workArea.Y + workArea.Height - AppWindow.Position.Y;
+        var maxWidth = _workArea.X + _workArea.Width - _startPosition.X;
+        var maxHeight = _workArea.Y + _workArea.Height - _startPosition.Y;
+        var minWidth = (int)(MinWidthDip * _scale);
+        var minHeight = (int)(MinHeightDip * _scale);
 
-        var width = Math.Clamp(_startSize.Width + cursor.X - _startPointer.X, (int)(MinWidthDip * scale), Math.Max((int)(MinWidthDip * scale), maxWidth));
-        var height = Math.Clamp(_startSize.Height + cursor.Y - _startPointer.Y, (int)(MinHeightDip * scale), Math.Max((int)(MinHeightDip * scale), maxHeight));
-        AppWindow.Resize(new SizeInt32(width, height));
+        var width = Math.Clamp(_startSize.Width + cursor.X - _startPointer.X, minWidth, Math.Max(minWidth, maxWidth));
+        var height = Math.Clamp(_startSize.Height + cursor.Y - _startPointer.Y, minHeight, Math.Max(minHeight, maxHeight));
+        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, width, height, SwpNomove | SwpNozorder | SwpNoactivate);
     }
 
     private void ResizeHandle_PointerReleased(object sender, PointerRoutedEventArgs e)
@@ -220,6 +250,29 @@ public sealed partial class OverlayWindow : WindowEx
         _resizing = false;
         ResizeHandle.ReleasePointerCapture(e.Pointer);
         SaveGeometry();
+    }
+
+    // ---- mouse wheel: one notch = one subtitle line ----
+
+    private void SourceScroll_PointerWheelChanged(object sender, PointerRoutedEventArgs e) =>
+        ScrollByWheel(SourceScroll, SourceText.LineHeight, e);
+
+    private void TranslationScroll_PointerWheelChanged(object sender, PointerRoutedEventArgs e) =>
+        ScrollByWheel(TranslationScroll, TranslationText.LineHeight, e);
+
+    private static void ScrollByWheel(Microsoft.UI.Xaml.Controls.ScrollViewer viewer, double lineHeight, PointerRoutedEventArgs e)
+    {
+        if (viewer.ScrollableHeight <= 0) return;
+
+        var delta = e.GetCurrentPoint(viewer).Properties.MouseWheelDelta;
+        if (delta == 0) return;
+
+        var step = lineHeight > 0 ? lineHeight : 24;
+        // WHEEL_DELTA is 120 per notch. Smooth wheels report fractions of that.
+        var lines = delta / 120.0;
+        var offset = Math.Clamp(viewer.VerticalOffset - lines * step, 0, viewer.ScrollableHeight);
+        viewer.ChangeView(null, offset, null, disableAnimation: true);
+        e.Handled = true;
     }
 
     // ---- autoscroll: only when the wrapped line count grows ----
@@ -265,6 +318,15 @@ public sealed partial class OverlayWindow : WindowEx
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new IntPtr(exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
     }
 
+    private const uint SwpNosize = 0x0001;
+    private const uint SwpNomove = 0x0002;
+    private const uint SwpNozorder = 0x0004;
+    private const uint SwpNoactivate = 0x0010;
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
 
@@ -278,10 +340,23 @@ public sealed partial class OverlayWindow : WindowEx
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
     {
         public int X;
         public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 }
