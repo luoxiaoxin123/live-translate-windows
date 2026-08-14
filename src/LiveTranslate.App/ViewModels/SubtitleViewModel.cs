@@ -16,7 +16,6 @@ public sealed partial class SubtitleViewModel : ObservableObject
     private readonly UserSettingsRepository _settings;
     private bool _initializing = true;
 
-    public IReadOnlyList<LanguageChoice> SourceLanguages { get; }
     public IReadOnlyList<LanguageChoice> TargetLanguages { get; }
     public IReadOnlyList<string> AudioSources { get; } = new[]
     {
@@ -24,9 +23,6 @@ public sealed partial class SubtitleViewModel : ObservableObject
         L.AudioSourceMic,
         L.AudioSourceBoth,
     };
-
-    [ObservableProperty]
-    public partial int SourceLanguageIndex { get; set; }
 
     [ObservableProperty]
     public partial int TargetLanguageIndex { get; set; }
@@ -72,15 +68,11 @@ public sealed partial class SubtitleViewModel : ObservableObject
         _session = session;
         _settings = settings;
 
-        SourceLanguages = Languages.SourceOptions
-            .Select(o => new LanguageChoice(o.Code, o.DisplayName(L.IsChinese)))
-            .ToList();
         TargetLanguages = Languages.TargetOptions
             .Select(o => new LanguageChoice(o.Code, o.DisplayName(L.IsChinese)))
             .ToList();
 
         var current = _settings.Current;
-        SourceLanguageIndex = IndexOf(SourceLanguages, current.SourceLanguageCode);
         TargetLanguageIndex = IndexOf(TargetLanguages, current.TargetLanguageCode);
         AudioSourceIndex = current.AudioSourceMode switch
         {
@@ -103,13 +95,6 @@ public sealed partial class SubtitleViewModel : ObservableObject
             if (options[i].Code == code) return i;
         }
         return 0;
-    }
-
-    partial void OnSourceLanguageIndexChanged(int value)
-    {
-        if (_initializing || value < 0 || value >= SourceLanguages.Count) return;
-        var code = SourceLanguages[value].Code;
-        _settings.Update(s => s with { SourceLanguageCode = code });
     }
 
     partial void OnTargetLanguageIndexChanged(int value)
@@ -162,6 +147,7 @@ public sealed partial class SubtitleViewModel : ObservableObject
         {
             SessionStatus.Starting => (L.StatusStarting, InfoBarSeverity.Warning),
             SessionStatus.Running => (L.StatusRunning, InfoBarSeverity.Success),
+            SessionStatus.Reconnecting => (L.StatusReconnecting, InfoBarSeverity.Warning),
             SessionStatus.Stopped => (L.StatusStopped, InfoBarSeverity.Informational),
             SessionStatus.Error => (L.StatusError, InfoBarSeverity.Error),
             _ => (L.StatusIdle, InfoBarSeverity.Informational),

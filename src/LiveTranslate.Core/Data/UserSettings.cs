@@ -12,8 +12,13 @@ public sealed record UserSettings
 
     public string Endpoint { get; init; } = DefaultEndpoint;
     public string ModelId { get; init; } = DefaultModelId;
-    public string SourceLanguageCode { get; init; } = "auto";
     public string TargetLanguageCode { get; init; } = "zh-Hans";
+
+    /// <summary>
+    /// Official default is false: stay silent when input is already the target language.
+    /// True makes the model parrot that audio (and can pull BGM into the translated voice).
+    /// </summary>
+    public bool EchoTargetLanguage { get; init; }
 
     public double FontSize { get; init; } = 18;
     public double BackgroundOpacity { get; init; } = 0.65;

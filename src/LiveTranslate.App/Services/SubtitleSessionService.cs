@@ -14,6 +14,7 @@ public enum SessionStatus
     Idle,
     Starting,
     Running,
+    Reconnecting,
     Stopped,
     Error,
 }
@@ -29,7 +30,7 @@ public sealed class SubtitleSessionService
     private readonly ApiKeyStore _keys;
     private readonly DispatcherQueue _dispatcher;
 
-    private LiveTranslateClient? _client;
+    private volatile LiveTranslateClient? _client;
     private SystemAudioCapturer? _systemCapturer;
     private MicAudioCapturer? _micCapturer;
     private PcmMixer? _mixer;
@@ -51,7 +52,7 @@ public sealed class SubtitleSessionService
     public string LastOutputFull { get; private set; } = "";
     private DateTime _lastStoppedAt;
 
-    public bool IsActive => Status is SessionStatus.Starting or SessionStatus.Running;
+    public bool IsActive => Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Reconnecting;
 
     /// <summary>Raised on the UI thread whenever status changes.</summary>
     public event Action? StateChanged;
@@ -74,6 +75,16 @@ public sealed class SubtitleSessionService
     private int _loggedOutputs;
     private int _transcriptFlushScheduled;
     private DispatcherQueueTimer? _transcriptTimer;
+    private DispatcherQueueTimer? _stableTimer;
+
+    private string? _currentApiKey;
+    private bool _reconnectInFlight;
+    private int _unexpectedReconnects;
+    private bool _rotateKeyNext;
+    private CancellationTokenSource? _reconnectCts;
+
+    private const int MaxUnexpectedReconnects = 5;
+    private static readonly TimeSpan StableAfter = TimeSpan.FromSeconds(30);
 
     private static void Log(string message)
     {
@@ -119,6 +130,10 @@ public sealed class SubtitleSessionService
         _captureStarted = false;
         _loggedInputs = 0;
         _loggedOutputs = 0;
+        _unexpectedReconnects = 0;
+        _reconnectInFlight = false;
+        _rotateKeyNext = false;
+        _currentApiKey = apiKey;
         RotateLogIfLarge();
 
         var settings = _settings.Current;
@@ -131,9 +146,22 @@ public sealed class SubtitleSessionService
         _overlay = new OverlayWindow(_settings);
         _overlay.ShowNoActivate();
 
-        var client = new LiveTranslateClient();
+        var client = BindClient();
         _client = client;
+
+        await client.ConnectAsync(new SessionConfig(
+            settings.Endpoint,
+            apiKey,
+            settings.ModelId,
+            settings.TargetLanguageCode,
+            settings.EchoTargetLanguage));
+    }
+
+    private LiveTranslateClient BindClient()
+    {
+        var client = new LiveTranslateClient();
         client.StateChanged += (state, message) => OnClientStateChanged(client, state, message);
+        client.GoAwayReceived += timeLeft => OnGoAway(client, timeLeft);
         client.InputTranscript += text => OnTranscript(client, text, isInput: true);
         client.OutputTranscript += text => OnTranscript(client, text, isInput: false);
         client.AudioChunk += (pcm, mime) =>
@@ -148,13 +176,10 @@ public sealed class SubtitleSessionService
                 StateChanged?.Invoke();
             }
         });
-
-        await client.ConnectAsync(new SessionConfig(
-            settings.Endpoint,
-            apiKey,
-            settings.ModelId,
-            settings.TargetLanguageCode));
+        return client;
     }
+
+    private void ForwardPcm(byte[] pcm) => _client?.SendPcm16Le(pcm);
 
     private bool _finalizing;
 
@@ -183,7 +208,6 @@ public sealed class SubtitleSessionService
     {
         await TearDownAsync();
         _settings.Flush();
-        Microsoft.UI.Xaml.Application.Current.Exit();
     }
 
     public (bool Ok, string Message) ExportLastSession()
@@ -212,20 +236,165 @@ public sealed class SubtitleSessionService
 
             switch (state)
             {
-                case LiveConnectionState.Ready when Status == SessionStatus.Starting:
-                    StartCapturePipeline(client);
+                case LiveConnectionState.Ready:
+                    OnClientReady();
                     break;
 
                 case LiveConnectionState.Failed:
-                    _ = FailSessionAsync(message ?? "Connection failed.");
+                    HandleDisconnect(client, message ?? "Connection failed.");
                     break;
 
                 case LiveConnectionState.Closed when IsActive:
-                    _ = FailSessionAsync(L.SessionClosed(message ?? ""));
+                    HandleDisconnect(client, message ?? "");
                     break;
             }
         });
     }
+
+    private void OnClientReady()
+    {
+        _reconnectInFlight = false;
+        if (!_captureStarted)
+        {
+            StartCapturePipeline();
+            return;
+        }
+
+        SetStatus(SessionStatus.Running, _systemCapturer is { UsingProcessExclude: false } ? L.UsingClassicLoopback : "");
+        ArmStableTimer();
+    }
+
+    private void OnGoAway(LiveTranslateClient client, TimeSpan? timeLeft)
+    {
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(_client, client) || _finalizing || !IsActive) return;
+            Log($"goAway timeLeft={timeLeft}");
+            _ = ReconnectAsync(expected: true, reason: "");
+        });
+    }
+
+    private void HandleDisconnect(LiveTranslateClient client, string message)
+    {
+        if (!ReferenceEquals(_client, client) || _finalizing || !IsActive) return;
+
+        if (LiveTranslateClient.IsQuotaError(message))
+            _rotateKeyNext = true;
+
+        if (!LiveTranslateClient.IsReconnectableFailure(message))
+        {
+            _ = FailSessionAsync(message);
+            return;
+        }
+
+        _reconnectInFlight = false;
+        _ = ReconnectAsync(expected: false, reason: message);
+    }
+
+    private async Task ReconnectAsync(bool expected, string reason)
+    {
+        if (_finalizing || !IsActive) return;
+        if (_reconnectInFlight) return;
+        _reconnectInFlight = true;
+
+        if (!expected)
+        {
+            _unexpectedReconnects++;
+            if (_unexpectedReconnects > MaxUnexpectedReconnects)
+            {
+                _reconnectInFlight = false;
+                await FailSessionAsync(L.ReconnectGaveUp);
+                return;
+            }
+        }
+
+        SetStatus(SessionStatus.Reconnecting, expected ? "" : reason);
+        Log($"reconnect expected={expected} unexpected={_unexpectedReconnects}");
+
+        var delay = expected || _unexpectedReconnects <= 0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(Math.Min(16, Math.Pow(2, _unexpectedReconnects - 1)));
+
+        var old = _client;
+        var replacement = BindClient();
+        _client = replacement;
+
+        var cts = new CancellationTokenSource();
+        _reconnectCts?.Cancel();
+        _reconnectCts = cts;
+
+        try
+        {
+            if (old != null)
+            {
+                try { await old.CloseAsync().ConfigureAwait(false); } catch { }
+            }
+
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, cts.Token).ConfigureAwait(false);
+
+            if (_finalizing || !ReferenceEquals(_client, replacement) || cts.IsCancellationRequested)
+            {
+                _reconnectInFlight = false;
+                return;
+            }
+
+            var settings = _settings.Current;
+            var key = _currentApiKey;
+            if (_rotateKeyNext)
+            {
+                key = _keys.NextRotatedKey() ?? key;
+                _currentApiKey = key;
+                _rotateKeyNext = false;
+            }
+
+            if (string.IsNullOrEmpty(key))
+            {
+                _reconnectInFlight = false;
+                _dispatcher.TryEnqueue(() => _ = FailSessionAsync(L.NoApiKey));
+                return;
+            }
+
+            await replacement.ConnectAsync(new SessionConfig(
+                settings.Endpoint,
+                key,
+                settings.ModelId,
+                settings.TargetLanguageCode,
+                settings.EchoTargetLanguage)).ConfigureAwait(false);
+
+            if (_finalizing || !ReferenceEquals(_client, replacement))
+            {
+                try { await replacement.CloseAsync().ConfigureAwait(false); } catch { }
+                _reconnectInFlight = false;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _reconnectInFlight = false;
+        }
+        catch (Exception ex)
+        {
+            _reconnectInFlight = false;
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (!_finalizing && ReferenceEquals(_client, replacement))
+                    _ = FailSessionAsync(ex.Message);
+            });
+        }
+    }
+
+    private void ArmStableTimer()
+    {
+        _stableTimer ??= _dispatcher.CreateTimer();
+        _stableTimer.Stop();
+        _stableTimer.Interval = StableAfter;
+        _stableTimer.IsRepeating = false;
+        _stableTimer.Tick -= OnStableTick;
+        _stableTimer.Tick += OnStableTick;
+        _stableTimer.Start();
+    }
+
+    private void OnStableTick(DispatcherQueueTimer sender, object args) => _unexpectedReconnects = 0;
 
     private async Task FailSessionAsync(string message)
     {
@@ -247,7 +416,7 @@ public sealed class SubtitleSessionService
         }
     }
 
-    private void StartCapturePipeline(LiveTranslateClient client)
+    private void StartCapturePipeline()
     {
         if (_captureStarted) return;
         _captureStarted = true;
@@ -267,7 +436,7 @@ public sealed class SubtitleSessionService
             {
                 Action<string> onCaptureError = message => _dispatcher.TryEnqueue(() =>
                 {
-                    if (ReferenceEquals(_client, client)) _ = FailSessionAsync($"Audio capture stopped: {message}");
+                    if (!_finalizing && IsActive) _ = FailSessionAsync(L.CaptureStopped(message));
                 });
 
                 if (mode.NeedsSystemAudio())
@@ -285,18 +454,18 @@ public sealed class SubtitleSessionService
 
                 if (mode == AudioSourceMode.MediaAndMic)
                 {
-                    var localMixer = new PcmMixer(mixed => client.SendPcm16Le(mixed));
+                    var localMixer = new PcmMixer(mixed => ForwardPcm(mixed));
                     mixer = localMixer;
                     system!.Start(pcm => localMixer.OfferMedia(pcm));
                     mic!.Start(pcm => localMixer.OfferMic(pcm));
                 }
                 else if (mode == AudioSourceMode.Media)
                 {
-                    system!.Start(pcm => client.SendPcm16Le(pcm));
+                    system!.Start(pcm => ForwardPcm(pcm));
                 }
                 else
                 {
-                    mic!.Start(pcm => client.SendPcm16Le(pcm));
+                    mic!.Start(pcm => ForwardPcm(pcm));
                 }
 
                 if (system != null)
@@ -311,19 +480,23 @@ public sealed class SubtitleSessionService
                 try { mic?.Dispose(); } catch { }
                 _dispatcher.TryEnqueue(() =>
                 {
-                    if (ReferenceEquals(_client, client)) _ = FailSessionAsync($"Audio capture failed: {ex.Message}");
+                    if (!_finalizing && IsActive) _ = FailSessionAsync(L.CaptureFailed(ex.Message));
                 });
                 return;
             }
 
             _dispatcher.TryEnqueue(() =>
             {
-                if (ReferenceEquals(_client, client) && Status == SessionStatus.Starting)
+                // Capture outlives a single WebSocket: publish if the session is still up,
+                // even if we already swapped to a replacement client during start-up.
+                if (!_finalizing && IsActive && _systemCapturer is null && _micCapturer is null)
                 {
                     _systemCapturer = system;
                     _micCapturer = mic;
                     _mixer = mixer;
+                    _reconnectInFlight = false;
                     SetStatus(SessionStatus.Running, warning);
+                    ArmStableTimer();
                 }
                 else
                 {
@@ -390,6 +563,9 @@ public sealed class SubtitleSessionService
 
     private async Task TearDownAsync()
     {
+        _reconnectCts?.Cancel();
+        _reconnectInFlight = false;
+        _stableTimer?.Stop();
         _transcriptTimer?.Stop();
         FlushTranscriptUi();
 
