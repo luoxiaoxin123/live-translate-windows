@@ -1,30 +1,47 @@
-name: Release
+name: Pack
 
+# Official (main): pack on every push, including a merged PR. Download the
+# artifact and attach it when you create the tag / GitHub Release yourself.
+# Debug (any other ref): Actions → Pack → Run workflow. Leave the branch as
+# main so this file is used, and put the feature branch name in "ref".
 on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch / tag / SHA to pack. Empty = the branch chosen above. Non-main builds a debug test package.'
+        required: false
+        type: string
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  pack:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve version from tag
-        id: ver
+      - name: Resolve what to pack
+        id: meta
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $ver = $tag.TrimStart("v", "V")
-          if ($ver -notmatch '^\d+\.\d+') {
-            throw "Tag must look like v0.2.0, got '$tag'"
+          $requested = "${{ inputs.ref }}".Trim()
+          if ([string]::IsNullOrWhiteSpace($requested)) {
+            $requested = "${{ github.ref_name }}"
           }
-          "version=$ver" >> $env:GITHUB_OUTPUT
-          "APP_VERSION=$ver" >> $env:GITHUB_ENV
-          Write-Host "APP_VERSION=$ver"
+          $isOfficial = $requested -in @('main', 'refs/heads/main')
+          $slug = ($requested -replace '^refs/heads/', '' -replace '[^A-Za-z0-9._-]+', '-').Trim('-')
+          if ([string]::IsNullOrWhiteSpace($slug)) { $slug = 'head' }
+          "ref=$requested" >> $env:GITHUB_OUTPUT
+          "official=$($isOfficial.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "slug=$slug" >> $env:GITHUB_OUTPUT
+          Write-Host "pack ref=$requested official=$isOfficial slug=$slug"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.ref }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -33,28 +50,49 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $base = (Select-Xml -Path 'src\LiveTranslate.App\LiveTranslate.App.csproj' -XPath '//Version').Node.InnerText.Trim()
+          if ([string]::IsNullOrWhiteSpace($base)) { $base = '0.1.0' }
+          $sha = (git rev-parse --short HEAD)
+          $official = '${{ steps.meta.outputs.official }}' -eq 'true'
+          $ver = if ($official) { $base } else { "$base-debug.${{ steps.meta.outputs.slug }}.$sha" }
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          Write-Host "version=$ver"
+
       - name: Build installer
         shell: pwsh
         run: ./tools/pack.ps1 -Version ${{ steps.ver.outputs.version }}
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: LiveTranslate-windows
-          path: |
-            LiveTranslate-Setup-x64.exe
-            LiveTranslate-win-x64.zip
-
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Label debug artifacts
+        if: steps.meta.outputs.official != 'true'
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $exists = $true
-          gh release view $tag 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) { $exists = $false }
-          if (-not $exists) {
-            gh release create $tag --title $tag --generate-notes --verify-tag
-          }
-          gh release upload $tag LiveTranslate-Setup-x64.exe LiveTranslate-win-x64.zip --clobber
+          Rename-Item LiveTranslate-Setup-x64.exe LiveTranslate-Setup-x64-debug.exe
+          Rename-Item LiveTranslate-win-x64.zip LiveTranslate-win-x64-debug.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.official == 'true' && 'LiveTranslate-windows' || format('LiveTranslate-windows-debug-{0}', steps.meta.outputs.slug) }}
+          path: |
+            LiveTranslate-Setup-x64*.exe
+            LiveTranslate-win-x64*.zip
+          if-no-files-found: error
+          retention-days: ${{ steps.meta.outputs.official == 'true' && 90 || 14 }}
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          $kind = if ('${{ steps.meta.outputs.official }}' -eq 'true') { 'official (main)' } else { 'debug (test)' }
+          @"
+          ## Pack complete
+          - Kind: $kind
+          - Ref: `${{ steps.meta.outputs.ref }}`
+          - Version: `${{ steps.ver.outputs.version }}`
+
+          Download the artifact from this run.
+          For a public release: create the tag and GitHub Release yourself, then attach the **main** installer.
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
