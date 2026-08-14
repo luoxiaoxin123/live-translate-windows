@@ -6,4 +6,4 @@ public sealed record SessionConfig(
     string ApiKey,
     string ModelId,
     string TargetLanguageCode,
-    bool EchoTargetLanguage = true);
+    bool EchoTargetLanguage = false);

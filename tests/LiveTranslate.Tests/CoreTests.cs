@@ -52,6 +52,16 @@ public class LiveProtocolTests
     }
 
     [Fact]
+    public void SetupMessage_EchoTargetLanguageDefaultsOff()
+    {
+        var json = LiveTranslateClient.BuildSetupMessage("m", "en", echoTargetLanguage: false);
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.GetProperty("setup").GetProperty("generationConfig")
+            .GetProperty("translationConfig").GetProperty("echoTargetLanguage").GetBoolean());
+        Assert.False(new SessionConfig("wss://x", "k", "m", "en").EchoTargetLanguage);
+    }
+
+    [Fact]
     public void RealtimeAudioMessage_EncodesBase64PcmWithMime()
     {
         var pcm = new byte[] { 1, 2, 3, 4 };
@@ -81,6 +91,56 @@ public class LiveProtocolTests
     public void BuildUrl_KeyWithDollarSignsSurvivesReplacement()
     {
         Assert.Equal("wss://host/path?key=sk$1$&abc&b=2", LiveTranslateClient.BuildUrl("wss://host/path?key=OLD&b=2", "sk$1$&abc"));
+    }
+
+    [Theory]
+    [InlineData("""{"goAway":{"timeLeft":"10s"}}""", true, 10.0)]
+    [InlineData("""{"go_away":{"time_left":{"seconds":10}}}""", true, 10.0)]
+    [InlineData("""{"goAway":{"timeLeft":{"seconds":5,"nanos":500000000}}}""", true, 5.5)]
+    [InlineData("""{"goAway":{}}""", true, null)]
+    [InlineData("""{"setupComplete":{}}""", false, null)]
+    [InlineData("""{"serverContent":{"inputTranscription":{"text":"hi"}}}""", false, null)]
+    [InlineData("not-json", false, null)]
+    public void TryParseGoAway_AcceptsCamelAndSnakeCase(string json, bool expected, double? seconds)
+    {
+        var parsed = LiveTranslateClient.TryParseGoAway(json, out var timeLeft);
+        Assert.Equal(expected, parsed);
+        if (seconds is null)
+        {
+            Assert.Null(timeLeft);
+        }
+        else
+        {
+            Assert.NotNull(timeLeft);
+            Assert.Equal(seconds.Value, timeLeft!.Value.TotalSeconds, precision: 3);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("Server closed the connection (PolicyViolation): Connection aborted because the client failed to close the connection after receiving a GoAway signal", true)]
+    [InlineData("Connection lost: Unable to read data from the transport connection", true)]
+    [InlineData("Server closed the connection (InternalServerError): Thread was cancelled", true)]
+    [InlineData("Audio send failed: The remote party closed the WebSocket connection", true)]
+    [InlineData("API key is empty.", false)]
+    [InlineData("Endpoint is empty.", false)]
+    [InlineData("Server error: code 400 — INVALID_ARGUMENT — bad model", false)]
+    [InlineData("Server error: UNAUTHENTICATED — API key not valid", false)]
+    [InlineData("PERMISSION_DENIED", false)]
+    [InlineData("API_KEY_INVALID", false)]
+    public void IsReconnectableFailure_ClassifiesReasons(string? reason, bool expected)
+    {
+        Assert.Equal(expected, LiveTranslateClient.IsReconnectableFailure(reason));
+    }
+
+    [Theory]
+    [InlineData("Server error: code 429 — RESOURCE_EXHAUSTED — quota exceeded", true)]
+    [InlineData("Connection lost: timeout", false)]
+    [InlineData(null, false)]
+    public void IsQuotaError_DetectsRateLimits(string? reason, bool expected)
+    {
+        Assert.Equal(expected, LiveTranslateClient.IsQuotaError(reason));
     }
 }
 
@@ -438,7 +498,7 @@ public class DataStoreTests
             var repo = new UserSettingsRepository(path);
             Assert.Equal(UserSettings.DefaultEndpoint, repo.Current.Endpoint);
 
-            repo.Update(s => s with { TargetLanguageCode = "ja", FontSize = 24, Bilingual = true, AudioSourceMode = AudioSourceMode.MediaAndMic });
+            repo.Update(s => s with { TargetLanguageCode = "ja", FontSize = 24, Bilingual = true, AudioSourceMode = AudioSourceMode.MediaAndMic, EchoTargetLanguage = true });
             repo.Flush();
 
             var reloaded = new UserSettingsRepository(path);
@@ -446,14 +506,29 @@ public class DataStoreTests
             Assert.Equal(24, reloaded.Current.FontSize);
             Assert.True(reloaded.Current.Bilingual);
             Assert.Equal(AudioSourceMode.MediaAndMic, reloaded.Current.AudioSourceMode);
+            Assert.True(reloaded.Current.EchoTargetLanguage);
 
             File.WriteAllText(path, "{corrupt");
             var recovered = new UserSettingsRepository(path);
             Assert.Equal(UserSettings.DefaultEndpoint, recovered.Current.Endpoint);
+            Assert.False(recovered.Current.EchoTargetLanguage);
         }
         finally
         {
             Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
         }
+    }
+
+    [Fact]
+    public void LanguageCatalog_MatchesOfficialLiveTranslateCodes()
+    {
+        var codes = Languages.TargetOptions.Select(o => o.Code).ToList();
+        Assert.Equal(codes.Count, codes.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("zh-Hans", codes);
+        Assert.Contains("no", codes);
+        Assert.Contains("fil", codes);
+        Assert.Contains("he", codes);
+        Assert.Equal("zh-Hans", Languages.FindTarget("missing").Code);
+        Assert.Equal(78, codes.Count);
     }
 }

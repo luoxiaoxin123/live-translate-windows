@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,8 @@ public enum LiveConnectionState
 /// language is auto-detected server-side), then stream 16 kHz PCM via realtimeInput. The server
 /// answers with setupComplete, input/output transcriptions and translated audio as inlineData.
 /// Both camelCase and snake_case field names are accepted; binary frames carry UTF-8 JSON too.
+/// A <c>goAway</c> frame means this WebSocket is about to be aborted (~10 min connection
+/// limit); the client must close promptly so the session layer can open a fresh socket.
 /// </summary>
 public sealed class LiveTranslateClient : IDisposable
 {
@@ -34,6 +37,7 @@ public sealed class LiveTranslateClient : IDisposable
     private Channel<byte[]>? _sendQueue;
     private volatile bool _setupComplete;
     private volatile bool _intentionalClose;
+    private volatile bool _goAway;
 
     public LiveConnectionState State { get; private set; } = LiveConnectionState.Idle;
 
@@ -44,6 +48,8 @@ public sealed class LiveTranslateClient : IDisposable
     public event Action<string>? OutputTranscript;
     public event Action<byte[], string?>? AudioChunk;
     public event Action<string>? ErrorOccurred;
+    /// <summary>Raised when the server asks us to close; <c>timeLeft</c> is informational.</summary>
+    public event Action<TimeSpan?>? GoAwayReceived;
 
     public async Task ConnectAsync(SessionConfig config)
     {
@@ -51,6 +57,7 @@ public sealed class LiveTranslateClient : IDisposable
 
         _intentionalClose = false;
         _setupComplete = false;
+        _goAway = false;
         SetState(LiveConnectionState.Connecting, null);
 
         var apiKey = config.ApiKey.Trim();
@@ -113,12 +120,17 @@ public sealed class LiveTranslateClient : IDisposable
     public async Task CloseAsync()
     {
         _intentionalClose = true;
-        var socket = _socket;
-        var cts = _sessionCts;
-        _socket = null;
-        _sessionCts = null;
-        _sendQueue?.Writer.TryComplete();
-        _sendQueue = null;
+        ClientWebSocket? socket;
+        CancellationTokenSource? cts;
+        lock (_stateLock)
+        {
+            socket = _socket;
+            cts = _sessionCts;
+            _socket = null;
+            _sessionCts = null;
+            _sendQueue?.Writer.TryComplete();
+            _sendQueue = null;
+        }
 
         // Cancel first so the receive/send loops exit via cancellation instead of
         // observing a disposed socket (which could surface as a spurious failure).
@@ -197,7 +209,7 @@ public sealed class LiveTranslateClient : IDisposable
         {
             if (ReferenceEquals(_socket, socket) && !_intentionalClose)
             {
-                ErrorOccurred?.Invoke($"Audio send failed: {Simplify(ex)}");
+                HandleClosed(socket, $"Audio send failed: {Simplify(ex)}");
             }
         }
     }
@@ -217,6 +229,11 @@ public sealed class LiveTranslateClient : IDisposable
                     result = await socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
+                        if (_goAway)
+                        {
+                            await CloseAsync().ConfigureAwait(false);
+                            return;
+                        }
                         HandleClosed(socket, $"Server closed the connection ({result.CloseStatus}): {result.CloseStatusDescription}");
                         return;
                     }
@@ -225,6 +242,11 @@ public sealed class LiveTranslateClient : IDisposable
 
                 // Binary frames also carry UTF-8 JSON on this API.
                 HandleMessage(Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
+                if (_goAway)
+                {
+                    await CloseAsync().ConfigureAwait(false);
+                    return;
+                }
             }
 
             HandleClosed(socket, "Connection ended.");
@@ -269,6 +291,15 @@ public sealed class LiveTranslateClient : IDisposable
             if (root.TryGetProperty("error", out var error))
             {
                 Fail(FormatError(error));
+                return;
+            }
+
+            if (TryGet(root, out var goAway, "goAway", "go_away"))
+            {
+                // Stop sending immediately; the receive loop closes the socket after this returns.
+                _setupComplete = false;
+                _goAway = true;
+                GoAwayReceived?.Invoke(ParseTimeLeft(goAway));
                 return;
             }
 
@@ -369,6 +400,99 @@ public sealed class LiveTranslateClient : IDisposable
         var inner = ex;
         while (inner.InnerException != null) inner = inner.InnerException;
         return inner.Message;
+    }
+
+    /// <summary>
+    /// True when <paramref name="json"/> is a Live API <c>goAway</c> / <c>go_away</c> server message.
+    /// </summary>
+    public static bool TryParseGoAway(string json, out TimeSpan? timeLeft)
+    {
+        timeLeft = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            if (!TryGet(root, out var goAway, "goAway", "go_away")) return false;
+            timeLeft = ParseTimeLeft(goAway);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True for disconnects the session layer should retry (GoAway, network blip, 1011).
+    /// False for auth/config errors that will fail again on the same key.
+    /// </summary>
+    public static bool IsReconnectableFailure(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return true;
+        return !IsFatalFailure(reason);
+    }
+
+    /// <summary>Quota / rate-limit: retry after rotating to the next stored API key.</summary>
+    public static bool IsQuotaError(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        return ContainsIgnoreCase(reason, "RESOURCE_EXHAUSTED")
+               || ContainsIgnoreCase(reason, "quota")
+               || ContainsIgnoreCase(reason, "429");
+    }
+
+    private static bool IsFatalFailure(string reason) =>
+        ContainsIgnoreCase(reason, "API key is empty")
+        || ContainsIgnoreCase(reason, "Endpoint is empty")
+        || ContainsIgnoreCase(reason, "invalid api key")
+        || ContainsIgnoreCase(reason, "API_KEY_INVALID")
+        || ContainsIgnoreCase(reason, "API key not valid")
+        || ContainsIgnoreCase(reason, "UNAUTHENTICATED")
+        || ContainsIgnoreCase(reason, "PERMISSION_DENIED")
+        || ContainsIgnoreCase(reason, "INVALID_ARGUMENT");
+
+    private static bool ContainsIgnoreCase(string haystack, string needle) =>
+        haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static TimeSpan? ParseTimeLeft(JsonElement goAway)
+    {
+        if (!TryGet(goAway, out var timeLeft, "timeLeft", "time_left")) return null;
+
+        if (timeLeft.ValueKind == JsonValueKind.String)
+            return ParseDurationString(timeLeft.GetString());
+
+        if (timeLeft.ValueKind == JsonValueKind.Number && timeLeft.TryGetDouble(out var seconds))
+            return TimeSpan.FromSeconds(seconds);
+
+        if (timeLeft.ValueKind == JsonValueKind.Object)
+        {
+            var wholeSeconds = 0L;
+            var nanos = 0;
+            if (timeLeft.TryGetProperty("seconds", out var secEl))
+            {
+                if (secEl.ValueKind == JsonValueKind.Number && secEl.TryGetInt64(out var s))
+                    wholeSeconds = s;
+                else if (secEl.ValueKind == JsonValueKind.String)
+                    long.TryParse(secEl.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out wholeSeconds);
+            }
+            if (timeLeft.TryGetProperty("nanos", out var nanoEl) && nanoEl.ValueKind == JsonValueKind.Number)
+                nanoEl.TryGetInt32(out nanos);
+            return TimeSpan.FromSeconds(wholeSeconds) + TimeSpan.FromTicks(nanos / 100);
+        }
+
+        return null;
+    }
+
+    private static TimeSpan? ParseDurationString(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var value = text.Trim();
+        if (value.EndsWith('s') || value.EndsWith('S'))
+            value = value[..^1];
+        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+            ? TimeSpan.FromSeconds(seconds)
+            : null;
     }
 
     // ---- wire-format builders (public static so tests can pin the exact shapes) ----

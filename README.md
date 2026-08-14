@@ -10,13 +10,13 @@ A **real-time subtitle** app for Windows with a native WinUI 3 interface, powere
 
 | Module | Description |
 |--------|-------------|
-| Subtitles page | Source/target language (21 languages), audio source, start/stop, status and live preview |
+| Subtitles page | Target language (70+ official Live Translate languages; source is auto-detected), audio source, start/stop, status and live preview |
 | Audio source | System audio / microphone / both (per-sample mixing) |
 | Floating subtitles | Always on top, never steals focus, per-pixel transparency; drag by the top handle, resize by the bottom-right handle (font size unchanged); position and size remembered |
 | Display modes | Translation only, or bilingual (source + translation with a divider) |
 | Auto-scroll | Each pane scrolls independently, and **only when a new line wraps** — no jitter while a line is still filling in |
 | Audio capture | System audio via WASAPI **process-exclude loopback** (the app's own translated voice is excluded automatically, so no feedback loop; Windows 10 2004+), falling back to classic loopback with capture paused while the translated voice plays. Microphone at 16 kHz PCM |
-| Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol |
+| Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol; closes on GoAway and reconnects automatically |
 | Translated voice | Off by default; plays alongside the original audio; volume up to **200%** (digital gain) |
 | Multiple API keys | Up to 10; sessions rotate through them; the connection test checks every key |
 | Export | After stopping, export the session transcript as Markdown to Downloads |
@@ -81,7 +81,8 @@ tests/LiveTranslate.Tests/  # xUnit unit tests (protocol / DSP / storage / expor
 ## Known limitations
 
 - DRM-protected or exclusive-mode audio cannot be captured by loopback → use the microphone instead
-- Live Translate is driven by the **target** language; keeping the source language on "Auto-detect" works best
+- Live Translate only accepts a **target** language; the model detects the source itself
+- Each Live WebSocket lasts about 10 minutes; the app closes on the server's GoAway and opens a fresh connection, keeping the overlay and transcript
 - Exports are two full sections (source + translation), not sentence-aligned pairs
 - The preview model and its quota may change; the endpoint and model ID are editable in Settings
 

@@ -39,40 +39,22 @@
                 Style="{StaticResource AccentButtonStyle}" />
 
             <Border Style="{StaticResource Card}">
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Grid.Column="0" Spacing="8">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind loc:L.SourceLanguage}" />
-                        <ComboBox
-                            HorizontalAlignment="Stretch"
-                            DisplayMemberPath="Name"
-                            IsEnabled="{x:Bind Vm.CanEditSession, Mode=OneWay}"
-                            ItemsSource="{x:Bind Vm.SourceLanguages}"
-                            SelectedIndex="{x:Bind Vm.SourceLanguageIndex, Mode=TwoWay}" />
-                    </StackPanel>
-
-                    <FontIcon
-                        Grid.Column="1"
-                        Margin="0,28,0,0"
-                        VerticalAlignment="Center"
-                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                        Glyph="&#xE72A;" />
-
-                    <StackPanel Grid.Column="2" Spacing="8">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind loc:L.TargetLanguage}" />
-                        <ComboBox
-                            HorizontalAlignment="Stretch"
-                            DisplayMemberPath="Name"
-                            IsEnabled="{x:Bind Vm.CanEditSession, Mode=OneWay}"
-                            ItemsSource="{x:Bind Vm.TargetLanguages}"
-                            SelectedIndex="{x:Bind Vm.TargetLanguageIndex, Mode=TwoWay}" />
-                    </StackPanel>
-                </Grid>
+                <StackPanel Spacing="8">
+                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind loc:L.TargetLanguage}" />
+                    <ComboBox
+                        HorizontalAlignment="Stretch"
+                        DisplayMemberPath="Name"
+                        IsEnabled="{x:Bind Vm.CanEditSession, Mode=OneWay}"
+                        IsTextSearchEnabled="True"
+                        ItemsSource="{x:Bind Vm.TargetLanguages}"
+                        MaxDropDownHeight="420"
+                        SelectedIndex="{x:Bind Vm.TargetLanguageIndex, Mode=TwoWay}" />
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind loc:L.TargetLanguageHint}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
             </Border>
 
             <Border Style="{StaticResource Card}">

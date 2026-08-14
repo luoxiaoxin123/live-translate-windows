@@ -145,6 +145,14 @@
                         Text="{x:Bind loc:L.PlayVoiceHint}"
                         TextWrapping="Wrap" />
 
+                    <ToggleSwitch
+                        Header="{x:Bind loc:L.EchoTargetLabel}"
+                        IsOn="{x:Bind Vm.EchoTargetLanguage, Mode=TwoWay}" />
+                    <TextBlock
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="{x:Bind loc:L.EchoTargetHint}"
+                        TextWrapping="Wrap" />
+
                     <Slider
                         Header="{x:Bind loc:L.VolumeLabel}"
                         Maximum="200"
