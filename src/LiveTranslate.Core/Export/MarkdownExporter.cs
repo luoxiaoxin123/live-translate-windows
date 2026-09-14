@@ -7,37 +7,49 @@ namespace LiveTranslate.Core.Export;
 /// <summary>
 /// Builds the session Markdown (full source text + full translation, not sentence-aligned —
 /// the live transcript stream has no reliable alignment) and saves it to the user's Downloads.
+/// Headings and the file name follow the UI language (Chinese or English).
 /// </summary>
 public static class MarkdownExporter
 {
-    public static string BuildMarkdown(string sourceText, string translationText, DateTime stoppedAt)
+    public static string BuildMarkdown(string sourceText, string translationText, DateTime stoppedAt, bool chinese = true)
     {
+        var time = stoppedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        var empty = chinese ? "（无）" : "(empty)";
+
         var sb = new StringBuilder();
-        sb.AppendLine("# 翻译结果");
+        sb.AppendLine(chinese ? "# 翻译结果" : "# Translation");
         sb.AppendLine();
-        sb.AppendLine($"- 停止时间：`{stoppedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}`");
+        sb.AppendLine(chinese ? $"- 停止时间：`{time}`" : $"- Stopped at: `{time}`");
         sb.AppendLine();
-        sb.AppendLine("## 原文");
+        sb.AppendLine(chinese ? "## 原文" : "## Source");
         sb.AppendLine();
-        sb.AppendLine(string.IsNullOrWhiteSpace(sourceText) ? "（无）" : sourceText.Trim());
+        sb.AppendLine(string.IsNullOrWhiteSpace(sourceText) ? empty : sourceText.Trim());
         sb.AppendLine();
-        sb.AppendLine("## 译文");
+        sb.AppendLine(chinese ? "## 译文" : "## Translation");
         sb.AppendLine();
-        sb.AppendLine(string.IsNullOrWhiteSpace(translationText) ? "（无）" : translationText.Trim());
+        sb.AppendLine(string.IsNullOrWhiteSpace(translationText) ? empty : translationText.Trim());
         return sb.ToString();
     }
 
-    /// <summary>File name like 7月26日-14.30-翻译结果.md — a dot instead of the colon NTFS forbids.</summary>
-    public static string FileName(DateTime stoppedAt) =>
-        $"{stoppedAt.Month}月{stoppedAt.Day}日-{stoppedAt.ToString("HH.mm", CultureInfo.InvariantCulture)}-翻译结果.md";
+    /// <summary>
+    /// File name like 7月26日-14.30-翻译结果.md or Translation-0726-14.30.md — a dot instead of
+    /// the colon NTFS forbids.
+    /// </summary>
+    public static string FileName(DateTime stoppedAt, bool chinese = true)
+    {
+        var time = stoppedAt.ToString("HH.mm", CultureInfo.InvariantCulture);
+        return chinese
+            ? $"{stoppedAt.Month}月{stoppedAt.Day}日-{time}-翻译结果.md"
+            : $"Translation-{stoppedAt.ToString("MMdd", CultureInfo.InvariantCulture)}-{time}.md";
+    }
 
     /// <summary>Writes the content into Downloads (unique name on collision); returns the full path.</summary>
-    public static string SaveToDownloads(string content, DateTime stoppedAt, string? downloadsDirectory = null)
+    public static string SaveToDownloads(string content, DateTime stoppedAt, string? downloadsDirectory = null, bool chinese = true)
     {
         var directory = downloadsDirectory ?? GetDownloadsPath();
         Directory.CreateDirectory(directory);
 
-        var path = UniquePath(directory, FileName(stoppedAt));
+        var path = UniquePath(directory, FileName(stoppedAt, chinese));
         var tempPath = path + ".tmp";
         File.WriteAllText(tempPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         File.Move(tempPath, path);

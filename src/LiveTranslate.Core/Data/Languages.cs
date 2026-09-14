@@ -96,4 +96,20 @@ public static class Languages
 
     public static LanguageOption FindTarget(string code) =>
         TargetOptions.FirstOrDefault(o => o.Code == code) ?? TargetOptions[0];
+
+    /// <summary>
+    /// Maps a stored code onto the catalog's spelling, case-insensitively (the official table lists
+    /// Norwegian as "no, nb"; we send <c>no</c>). Blank or unknown codes fall back to the default target.
+    /// </summary>
+    public static string CanonicalOrDefault(string? code)
+    {
+        var trimmed = code?.Trim() ?? "";
+        if (trimmed.Equals("nb", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("nn", StringComparison.OrdinalIgnoreCase))
+        {
+            return "no";
+        }
+        return TargetOptions.FirstOrDefault(o => o.Code.Equals(trimmed, StringComparison.OrdinalIgnoreCase))?.Code
+               ?? TargetOptions[0].Code;
+    }
 }

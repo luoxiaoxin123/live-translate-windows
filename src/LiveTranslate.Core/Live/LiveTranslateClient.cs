@@ -22,10 +22,14 @@ public enum LiveConnectionState
 /// Wire format aligned with https://ai.google.dev/gemini-api/docs/live-api/live-translate :
 /// on open we send a setup message with translationConfig (target language only — the source
 /// language is auto-detected server-side), then stream 16 kHz PCM via realtimeInput. The server
-/// answers with setupComplete, input/output transcriptions and translated audio as inlineData.
+/// answers with setupComplete, input/output transcriptions (carrying the detected languageCode
+/// when available) and translated audio as inlineData.
 /// Both camelCase and snake_case field names are accepted; binary frames carry UTF-8 JSON too.
 /// A <c>goAway</c> frame means this WebSocket is about to be aborted (~10 min connection
 /// limit); the client must close promptly so the session layer can open a fresh socket.
+/// Setup enables session resumption and sliding-window context compression (per the Live API
+/// session-management docs): the server keeps sending <c>sessionResumptionUpdate</c> handles,
+/// and passing the latest one to the next connection continues the same session.
 /// </summary>
 public sealed class LiveTranslateClient : IDisposable
 {
@@ -44,12 +48,19 @@ public sealed class LiveTranslateClient : IDisposable
     public string? FailureMessage { get; private set; }
 
     public event Action<LiveConnectionState, string?>? StateChanged;
-    public event Action<string>? InputTranscript;
-    public event Action<string>? OutputTranscript;
+    /// <summary>Transcript text plus the server-detected BCP-47 language code, when present.</summary>
+    public event Action<string, string?>? InputTranscript;
+    /// <summary>Transcript text plus the server-detected BCP-47 language code, when present.</summary>
+    public event Action<string, string?>? OutputTranscript;
     public event Action<byte[], string?>? AudioChunk;
     public event Action<string>? ErrorOccurred;
     /// <summary>Raised when the server asks us to close; <c>timeLeft</c> is informational.</summary>
     public event Action<TimeSpan?>? GoAwayReceived;
+    /// <summary>Raised with each new resumable-session handle from the server.</summary>
+    public event Action<string>? ResumptionHandleUpdated;
+
+    /// <summary>Latest resumable-session handle; null until the server issues one.</summary>
+    public string? LastResumptionHandle { get; private set; }
 
     public async Task ConnectAsync(SessionConfig config)
     {
@@ -92,7 +103,7 @@ public sealed class LiveTranslateClient : IDisposable
             var url = BuildUrl(config.Endpoint, apiKey);
             await socket.ConnectAsync(new Uri(url), connectTimeout.Token).ConfigureAwait(false);
 
-            var setup = BuildSetupMessage(config.ModelId, config.TargetLanguageCode, config.EchoTargetLanguage);
+            var setup = BuildSetupMessage(config.ModelId, config.TargetLanguageCode, config.EchoTargetLanguage, config.ResumptionHandle);
             await socket.SendAsync(Encoding.UTF8.GetBytes(setup), WebSocketMessageType.Text, true, cts.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -273,7 +284,7 @@ public sealed class LiveTranslateClient : IDisposable
         }
     }
 
-    private void HandleMessage(string text)
+    internal void HandleMessage(string text)
     {
         try
         {
@@ -294,6 +305,17 @@ public sealed class LiveTranslateClient : IDisposable
                 return;
             }
 
+            // Top-level session-management message; it may share a frame with goAway, so no return.
+            if (TryGet(root, out var resumption, "sessionResumptionUpdate", "session_resumption_update")
+                && resumption.ValueKind == JsonValueKind.Object
+                && resumption.TryGetProperty("resumable", out var resumable) && resumable.ValueKind == JsonValueKind.True
+                && (TryGetString(resumption, "newHandle", out var handle) || TryGetString(resumption, "new_handle", out handle))
+                && !string.IsNullOrWhiteSpace(handle))
+            {
+                LastResumptionHandle = handle;
+                ResumptionHandleUpdated?.Invoke(handle);
+            }
+
             if (TryGet(root, out var goAway, "goAway", "go_away"))
             {
                 // Stop sending immediately; the receive loop closes the socket after this returns.
@@ -308,13 +330,13 @@ public sealed class LiveTranslateClient : IDisposable
                 if (TryGet(content, out var input, "inputTranscription", "input_transcription")
                     && TryGetString(input, "text", out var inputText) && inputText.Length > 0)
                 {
-                    InputTranscript?.Invoke(inputText);
+                    InputTranscript?.Invoke(inputText, ReadLanguageCode(input));
                 }
 
                 if (TryGet(content, out var output, "outputTranscription", "output_transcription")
                     && TryGetString(output, "text", out var outputText) && outputText.Length > 0)
                 {
-                    OutputTranscript?.Invoke(outputText);
+                    OutputTranscript?.Invoke(outputText, ReadLanguageCode(output));
                 }
 
                 if (TryGet(content, out var turn, "modelTurn", "model_turn")
@@ -343,6 +365,13 @@ public sealed class LiveTranslateClient : IDisposable
         {
             // Ignore non-JSON frames.
         }
+    }
+
+    private static string? ReadLanguageCode(JsonElement transcription)
+    {
+        if (!TryGetString(transcription, "languageCode", out var code) || code.Length == 0)
+            TryGetString(transcription, "language_code", out code);
+        return string.IsNullOrWhiteSpace(code) ? null : code;
     }
 
     private static string FormatError(JsonElement error)
@@ -497,7 +526,7 @@ public sealed class LiveTranslateClient : IDisposable
 
     // ---- wire-format builders (public static so tests can pin the exact shapes) ----
 
-    public static string BuildSetupMessage(string modelId, string targetLanguageCode, bool echoTargetLanguage)
+    public static string BuildSetupMessage(string modelId, string targetLanguageCode, bool echoTargetLanguage, string? resumptionHandle = null)
     {
         var model = modelId.Trim();
         if (model.StartsWith("models/", StringComparison.OrdinalIgnoreCase))
@@ -525,6 +554,15 @@ public sealed class LiveTranslateClient : IDisposable
             writer.WriteStartObject("inputAudioTranscription");
             writer.WriteEndObject();
             writer.WriteStartObject("outputAudioTranscription");
+            writer.WriteEndObject();
+            // Empty object = resumable new session; a handle continues an earlier one.
+            writer.WriteStartObject("sessionResumption");
+            if (!string.IsNullOrWhiteSpace(resumptionHandle)) writer.WriteString("handle", resumptionHandle);
+            writer.WriteEndObject();
+            // Sliding-window compression lifts the session length cap for long streams.
+            writer.WriteStartObject("contextWindowCompression");
+            writer.WriteStartObject("slidingWindow");
+            writer.WriteEndObject();
             writer.WriteEndObject();
             writer.WriteEndObject();
             writer.WriteEndObject();

@@ -29,6 +29,49 @@ public class LiveProtocolTests
 
         Assert.Equal(JsonValueKind.Object, setup.GetProperty("inputAudioTranscription").ValueKind);
         Assert.Equal(JsonValueKind.Object, setup.GetProperty("outputAudioTranscription").ValueKind);
+
+        // Resumable from the first connection, with sliding-window context compression.
+        Assert.Empty(setup.GetProperty("sessionResumption").EnumerateObject());
+        Assert.Equal(JsonValueKind.Object,
+            setup.GetProperty("contextWindowCompression").GetProperty("slidingWindow").ValueKind);
+    }
+
+    [Fact]
+    public void SetupMessage_CarriesResumptionHandle()
+    {
+        var json = LiveTranslateClient.BuildSetupMessage("m", "en", true, resumptionHandle: "handle-123");
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("handle-123", doc.RootElement.GetProperty("setup")
+            .GetProperty("sessionResumption").GetProperty("handle").GetString());
+    }
+
+    [Fact]
+    public void SessionResumptionUpdate_KeepsLatestResumableHandle()
+    {
+        var client = new LiveTranslateClient();
+        var raised = new List<string>();
+        client.ResumptionHandleUpdated += raised.Add;
+
+        client.HandleMessage("""{"sessionResumptionUpdate":{"newHandle":"h1","resumable":true}}""");
+        client.HandleMessage("""{"sessionResumptionUpdate":{"resumable":false}}""");            // not resumable now
+        client.HandleMessage("""{"sessionResumptionUpdate":{"newHandle":"","resumable":true}}"""); // empty handle
+        client.HandleMessage("""{"session_resumption_update":{"new_handle":"h2","resumable":true}}""");
+
+        Assert.Equal(new[] { "h1", "h2" }, raised);
+        Assert.Equal("h2", client.LastResumptionHandle);
+    }
+
+    [Fact]
+    public void SessionResumptionUpdate_AndGoAwayInOneFrame_BothHandled()
+    {
+        var client = new LiveTranslateClient();
+        TimeSpan? goAway = null;
+        client.GoAwayReceived += timeLeft => goAway = timeLeft;
+
+        client.HandleMessage("""{"sessionResumptionUpdate":{"newHandle":"h9","resumable":true},"goAway":{"timeLeft":"5s"}}""");
+
+        Assert.Equal("h9", client.LastResumptionHandle);
+        Assert.Equal(TimeSpan.FromSeconds(5), goAway);
     }
 
     [Theory]
@@ -52,13 +95,31 @@ public class LiveProtocolTests
     }
 
     [Fact]
-    public void SetupMessage_EchoTargetLanguageDefaultsOff()
+    public void SetupMessage_WritesEchoFlag_And_SessionConfigDefaultsOn()
     {
         var json = LiveTranslateClient.BuildSetupMessage("m", "en", echoTargetLanguage: false);
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("setup").GetProperty("generationConfig")
             .GetProperty("translationConfig").GetProperty("echoTargetLanguage").GetBoolean());
-        Assert.False(new SessionConfig("wss://x", "k", "m", "en").EchoTargetLanguage);
+        // Echo stays on so same-language input still produces captions.
+        Assert.True(new SessionConfig("wss://x", "k", "m", "en").EchoTargetLanguage);
+    }
+
+    [Fact]
+    public void Transcriptions_CarryDetectedLanguageCode()
+    {
+        var client = new LiveTranslateClient();
+        var inputs = new List<(string Text, string? Code)>();
+        var outputs = new List<(string Text, string? Code)>();
+        client.InputTranscript += (text, code) => inputs.Add((text, code));
+        client.OutputTranscript += (text, code) => outputs.Add((text, code));
+
+        client.HandleMessage("""{"serverContent":{"inputTranscription":{"text":"你好","languageCode":"zh-CN"},"outputTranscription":{"text":"hello","language_code":"en"}}}""");
+        client.HandleMessage("""{"server_content":{"input_transcription":{"text":"hi"}}}""");
+        client.HandleMessage("""{"serverContent":{"inputTranscription":{"text":"yo","languageCode":"  "}}}""");
+
+        Assert.Equal(new (string, string?)[] { ("你好", "zh-CN"), ("hi", null), ("yo", null) }, inputs);
+        Assert.Equal(new (string, string?)[] { ("hello", "en") }, outputs);
     }
 
     [Fact]
@@ -217,6 +278,67 @@ public class AudioDspTests
     }
 
     [Fact]
+    public void MixAverage_TakesTheMeanWithoutOverflow()
+    {
+        var output = new byte[8];
+        PcmMixer.MixAverage(
+            PcmBytes(1000, -1000, short.MaxValue, short.MinValue),
+            PcmBytes(3000, 1000, short.MaxValue, short.MinValue),
+            output);
+        Assert.Equal(new short[] { 2000, 0, short.MaxValue, short.MinValue }, Samples(output));
+    }
+
+    [Fact]
+    public void Mixer_MixesAcrossChunkBoundaries()
+    {
+        var mixed = new List<byte>();
+        var mixer = new PcmMixer(bytes => mixed.AddRange(bytes));
+
+        mixer.OfferMedia(PcmBytes(100, 200, 300));
+        mixer.OfferMic(PcmBytes(0));
+        mixer.OfferMic(PcmBytes(20, 40));
+
+        Assert.Equal(new short[] { 50, 110, 170 }, Samples(mixed.ToArray()));
+    }
+
+    [Fact]
+    public void Mixer_OddTrailingBytesDoNotStall()
+    {
+        var mixed = new List<byte>();
+        var mixer = new PcmMixer(bytes => mixed.AddRange(bytes));
+
+        mixer.OfferMedia(new byte[] { 10, 0, 99 }); // one sample plus half of another
+        mixer.OfferMic(PcmBytes(10, 30));
+        Assert.Equal(new short[] { 10 }, Samples(mixed.ToArray()));
+
+        // Lone bytes are dropped; the leftover mic sample (30) then pairs with the next media sample.
+        mixer.OfferMedia(new byte[] { 1 });
+        mixer.OfferMic(new byte[] { 2 });
+        mixer.OfferMedia(PcmBytes(50, 20));
+        Assert.Equal(new short[] { 10, 40 }, Samples(mixed.ToArray()));
+    }
+
+    [Fact]
+    public void Mixer_QueueCapKeepsNewestAudio()
+    {
+        var mixed = new List<byte>();
+        var mixer = new PcmMixer(bytes => mixed.AddRange(bytes));
+
+        // 2 s of media in 100 ms chunks while the mic is still "alive" (no pass-through):
+        // only the newest 1.5 s may survive.
+        for (short chunk = 0; chunk < 20; chunk++)
+        {
+            mixer.OfferMedia(PcmBytes(Enumerable.Repeat((short)(chunk * 100), 1600).ToArray()));
+        }
+        mixer.OfferMic(new byte[64_000]);
+
+        var samples = Samples(mixed.ToArray());
+        Assert.Equal(24_000, samples.Length);
+        Assert.Equal(250, samples[0]);      // chunk 5 is the oldest kept (500 / 2)
+        Assert.Equal(950, samples[^1]);     // chunk 19 is the newest (1900 / 2)
+    }
+
+    [Fact]
     public void ApplyGain_ClampsInsteadOfWrapping()
     {
         var pcm = PcmBytes(30000, -30000, 1000);
@@ -242,6 +364,13 @@ public class AudioDspTests
         var bytes = new byte[samples.Length * 2];
         Buffer.BlockCopy(samples, 0, bytes, 0, bytes.Length);
         return bytes;
+    }
+
+    private static short[] Samples(byte[] pcm)
+    {
+        var samples = new short[pcm.Length / 2];
+        Buffer.BlockCopy(pcm, 0, samples, 0, samples.Length * 2);
+        return samples;
     }
 }
 
@@ -298,6 +427,49 @@ public class TranscriptAccumulatorTests
         acc.Append("ab\U0001F600cd"); // emoji is a surrogate pair straddling the cap boundary
         Assert.Equal("cd", acc.Text);
         Assert.False(char.IsLowSurrogate(acc.Text[0]));
+    }
+
+    [Fact]
+    public void CapTrim_DropsWholeSentences()
+    {
+        const string sentences = "这是第一句话。这是第二句话。这是第三句话。这是第四句话。";
+        var acc = new TranscriptAccumulator(40);
+        acc.Append(sentences + sentences);
+        Assert.Equal("这是第四句话。这是第一句话。这是第二句话。这是第三句话。这是第四句话。", acc.Text);
+    }
+
+    [Fact]
+    public void AlignCut_MovesPastTheNextTerminatorAndCloser()
+    {
+        const string text = "你好这是一个完整句子。”然后是下一句";
+        Assert.Equal("你好这是一个完整句子。”".Length, TranscriptAccumulator.AlignCutToSentenceBoundary(text, 4));
+        Assert.Equal("One. ".Length, TranscriptAccumulator.AlignCutToSentenceBoundary("One. Two", 1));
+    }
+
+    [Fact]
+    public void AlignCut_KeepsCutWhenNoTerminatorIsNear()
+    {
+        Assert.Equal(6, TranscriptAccumulator.AlignCutToSentenceBoundary("一段没有任何句号的长文本继续继续继续继续继续", 6));
+    }
+
+    [Fact]
+    public void CollapseCjkInteriorSpaces_OnlyBetweenHanOrKana()
+    {
+        Assert.Equal("做成任何其他东西", TranscriptAccumulator.CollapseCjkInteriorSpaces("做 成任何其他东西"));
+        Assert.Equal("做成", TranscriptAccumulator.CollapseCjkInteriorSpaces("做  成"));
+        Assert.Equal("こんにちは世界", TranscriptAccumulator.CollapseCjkInteriorSpaces("こんにちは 世界"));
+        Assert.Equal("hello world", TranscriptAccumulator.CollapseCjkInteriorSpaces("hello world"));
+        Assert.Equal("用 hello", TranscriptAccumulator.CollapseCjkInteriorSpaces("用 hello"));
+        // Korean separates words with spaces — keep them.
+        Assert.Equal("안녕하세요 여러분", TranscriptAccumulator.CollapseCjkInteriorSpaces("안녕하세요 여러분"));
+    }
+
+    [Fact]
+    public void SentenceLineBreaker_StripsCjkInteriorSpaces()
+    {
+        const string clean = "好的。嗯。然后他就走了。后来我们去了公园。下一段从这里开始。";
+        const string gapped = "好的。嗯。然后他就走 了。后来我们去了公园。下一段从这里开始。";
+        Assert.Equal(SentenceLineBreaker.Format(clean), SentenceLineBreaker.Format(gapped));
     }
 }
 
@@ -418,6 +590,22 @@ public class MarkdownExporterTests
     }
 
     [Fact]
+    public void EnglishExport_UsesEnglishHeadingsAndFileName()
+    {
+        var stopped = new DateTime(2026, 7, 6, 9, 5, 0);
+        var md = MarkdownExporter.BuildMarkdown("", "translated text", stopped, chinese: false);
+        Assert.Contains("# Translation", md);
+        Assert.Contains("- Stopped at: `2026-07-06 09:05`", md);
+        Assert.Contains("## Source", md);
+        Assert.Contains("(empty)", md);
+        Assert.DoesNotContain("译文", md);
+
+        var name = MarkdownExporter.FileName(stopped, chinese: false);
+        Assert.Equal("Translation-0706-09.05.md", name);
+        Assert.DoesNotContain(name, n => Path.GetInvalidFileNameChars().Contains(n));
+    }
+
+    [Fact]
     public void SaveToDownloads_WritesFileAndResolvesCollisions()
     {
         var dir = Path.Combine(Path.GetTempPath(), "lt-test-" + Guid.NewGuid().ToString("N"));
@@ -498,7 +686,7 @@ public class DataStoreTests
             var repo = new UserSettingsRepository(path);
             Assert.Equal(UserSettings.DefaultEndpoint, repo.Current.Endpoint);
 
-            repo.Update(s => s with { TargetLanguageCode = "ja", FontSize = 24, Bilingual = true, AudioSourceMode = AudioSourceMode.MediaAndMic, EchoTargetLanguage = true });
+            repo.Update(s => s with { TargetLanguageCode = "ja", FontSize = 24, Bilingual = true, AudioSourceMode = AudioSourceMode.MediaAndMic, BackgroundOpacity = 0 });
             repo.Flush();
 
             var reloaded = new UserSettingsRepository(path);
@@ -506,12 +694,17 @@ public class DataStoreTests
             Assert.Equal(24, reloaded.Current.FontSize);
             Assert.True(reloaded.Current.Bilingual);
             Assert.Equal(AudioSourceMode.MediaAndMic, reloaded.Current.AudioSourceMode);
-            Assert.True(reloaded.Current.EchoTargetLanguage);
+            Assert.Equal(0, reloaded.Current.BackgroundOpacity);
+
+            // Files from older versions still carry the removed echoTargetLanguage toggle.
+            File.WriteAllText(path, """{"targetLanguageCode":"ko","echoTargetLanguage":false,"bilingual":true}""");
+            var legacy = new UserSettingsRepository(path);
+            Assert.Equal("ko", legacy.Current.TargetLanguageCode);
+            Assert.True(legacy.Current.Bilingual);
 
             File.WriteAllText(path, "{corrupt");
             var recovered = new UserSettingsRepository(path);
             Assert.Equal(UserSettings.DefaultEndpoint, recovered.Current.Endpoint);
-            Assert.False(recovered.Current.EchoTargetLanguage);
         }
         finally
         {
@@ -530,5 +723,19 @@ public class DataStoreTests
         Assert.Contains("he", codes);
         Assert.Equal("zh-Hans", Languages.FindTarget("missing").Code);
         Assert.Equal(78, codes.Count);
+    }
+
+    [Theory]
+    [InlineData("ja", "ja")]
+    [InlineData(" ZH-hant ", "zh-Hant")]
+    [InlineData("pt-br", "pt-BR")]
+    [InlineData("nb", "no")]
+    [InlineData("NN", "no")]
+    [InlineData("xx-unknown", "zh-Hans")]
+    [InlineData("", "zh-Hans")]
+    [InlineData(null, "zh-Hans")]
+    public void LanguageCatalog_CanonicalOrDefault(string? stored, string expected)
+    {
+        Assert.Equal(expected, Languages.CanonicalOrDefault(stored));
     }
 }

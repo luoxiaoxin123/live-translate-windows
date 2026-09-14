@@ -1,7 +1,11 @@
 using System.Runtime.InteropServices;
+using LiveTranslate.App.Localization;
 using LiveTranslate.Core.Data;
+using LiveTranslate.Core.Text;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Input;
 using Windows.Graphics;
 using WinUIEx;
@@ -11,13 +15,28 @@ namespace LiveTranslate.App.Views;
 /// <summary>
 /// The floating subtitle window: borderless, always on top, never activated (focus stays in
 /// the video app), per-pixel transparent — a semi-transparent rounded backdrop with fully
-/// opaque text. Top grabber drags; bottom-right handle resizes (font size unchanged); each
-/// pane auto-scrolls only when its line count grows.
+/// opaque text. Top grabber drags; the always-visible corner arc resizes (font size unchanged);
+/// each pane auto-scrolls only when its line count grows. When the input is already the target
+/// language the session collapses bilingual mode to a single pane.
+///
+/// Like the Android overlay, the top control strip (grabber + close button) stays out of the way:
+/// it shows for a few seconds after the window appears and whenever the mouse is over it, then
+/// tucks away shortly after the mouse leaves — the caption area takes the freed space.
 /// </summary>
 public sealed partial class OverlayWindow : WindowEx
 {
+    /// <summary>Raised when the user clicks the strip's close button; the session should end.</summary>
+    public event Action? CloseRequested;
+
     private const int MinWidthDip = 200;
     private const int MinHeightDip = 80;
+
+    private const long ControlsShownOnStartMs = 5000; // same as Android's first reveal
+    private const long ControlsHideDelayMs = 1000;    // after the mouse leaves the window
+
+    private DispatcherQueueTimer? _controlsTimer;
+    private bool _controlsShown = true; // the XAML starts expanded
+    private long _hideControlsAt;
 
     private readonly UserSettingsRepository _settings;
     private bool _allowClose;
@@ -33,6 +52,9 @@ public sealed partial class OverlayWindow : WindowEx
     private bool _sourceTextDirty;
     private bool _translationTextDirty;
 
+    private bool _bilingual;
+    private bool _sameLanguage;
+
     private IntPtr _hwnd;
     private RectInt32 _workArea;
     private double _scale;
@@ -41,6 +63,7 @@ public sealed partial class OverlayWindow : WindowEx
     {
         _settings = settings;
         InitializeComponent();
+        AutomationProperties.SetName(CloseButton, L.CloseSubtitles);
 
         SystemBackdrop = new TransparentTintBackdrop();
 
@@ -55,6 +78,7 @@ public sealed partial class OverlayWindow : WindowEx
         AppWindow.IsShownInSwitchers = false;
 
         ApplyNoActivateStyle();
+        RemoveWindowFrame();
         ApplyInitialGeometry();
         ApplyAppearance(_settings.Current);
 
@@ -65,10 +89,15 @@ public sealed partial class OverlayWindow : WindowEx
         };
     }
 
-    public void ShowNoActivate() => AppWindow.Show(activateWindow: false);
+    public void ShowNoActivate()
+    {
+        AppWindow.Show(activateWindow: false);
+        RevealControls(ControlsShownOnStartMs);
+    }
 
     public void CloseOverlay()
     {
+        _controlsTimer?.Stop();
         _allowClose = true;
         Close();
     }
@@ -97,9 +126,26 @@ public sealed partial class OverlayWindow : WindowEx
         SourceText.LineHeight = Math.Ceiling(fontSize * 0.9 * 1.45);
         SourceText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
 
-        Bg.Opacity = Math.Clamp(settings.BackgroundOpacity, 0.10, 0.95);
+        Bg.Opacity = Math.Clamp(settings.BackgroundOpacity, 0, 0.95);
 
-        var bilingual = settings.Bilingual;
+        _bilingual = settings.Bilingual;
+        ApplyLayoutMode();
+    }
+
+    /// <summary>
+    /// Input already in the target language: show one pane even if bilingual is on.
+    /// Session-scoped; the bilingual setting itself is untouched.
+    /// </summary>
+    public void SetSameLanguageMode(bool enabled)
+    {
+        if (_sameLanguage == enabled) return;
+        _sameLanguage = enabled;
+        ApplyLayoutMode();
+    }
+
+    private void ApplyLayoutMode()
+    {
+        var bilingual = _bilingual && !_sameLanguage;
         SourceScroll.Visibility = bilingual ? Visibility.Visible : Visibility.Collapsed;
         Divider.Visibility = bilingual ? Visibility.Visible : Visibility.Collapsed;
         SourceRowDef.Height = bilingual ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
@@ -180,6 +226,58 @@ public sealed partial class OverlayWindow : WindowEx
             OverlayWidth = rect.Width,
             OverlayHeight = rect.Height,
         });
+    }
+
+    // ---- auto-hiding controls ----
+
+    private void Root_PointerActivity(object sender, PointerRoutedEventArgs e) => RevealControls(ControlsHideDelayMs);
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
+
+    /// <summary>Shows the control strip for at least <paramref name="visibleMs"/>.</summary>
+    private void RevealControls(long visibleMs)
+    {
+        _hideControlsAt = Math.Max(_hideControlsAt, Environment.TickCount64 + visibleMs);
+        if (!_controlsShown)
+        {
+            _controlsShown = true;
+            Grabber.IsHitTestVisible = true;
+            ShowControlsStoryboard.Begin();
+        }
+
+        if (_controlsTimer == null)
+        {
+            _controlsTimer = DispatcherQueue.CreateTimer();
+            _controlsTimer.Interval = TimeSpan.FromMilliseconds(200);
+            _controlsTimer.Tick += (_, _) => OnControlsTimerTick();
+        }
+        if (!_controlsTimer.IsRunning) _controlsTimer.Start();
+    }
+
+    // Polls the cursor instead of relying on PointerExited, which a no-activate window
+    // doesn't reliably get when the mouse leaves quickly or a drag ends outside it.
+    private void OnControlsTimerTick()
+    {
+        var now = Environment.TickCount64;
+        if (_dragging || _resizing || IsCursorOverWindow())
+        {
+            _hideControlsAt = Math.Max(_hideControlsAt, now + ControlsHideDelayMs);
+            return;
+        }
+        if (now < _hideControlsAt) return;
+
+        _controlsTimer?.Stop();
+        _controlsShown = false;
+        Grabber.IsHitTestVisible = false; // also covers the close button inside the strip
+        HideControlsStoryboard.Begin();
+    }
+
+    private bool IsCursorOverWindow()
+    {
+        if (!GetCursorPos(out var cursor)) return false;
+        var rect = CurrentRect();
+        return cursor.X >= rect.X && cursor.X < rect.X + rect.Width
+            && cursor.Y >= rect.Y && cursor.Y < rect.Y + rect.Height;
     }
 
     // ---- drag to move ----
@@ -277,28 +375,41 @@ public sealed partial class OverlayWindow : WindowEx
 
     // ---- autoscroll: only when the wrapped line count grows ----
 
+    // The control strip sliding in (or the window getting shorter) shrinks a pane's viewport;
+    // a pane that was showing its newest line keeps it in view instead of hiding it below.
+    private void CaptionScroll_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var viewer = (Microsoft.UI.Xaml.Controls.ScrollViewer)sender;
+        if (e.NewSize.Height >= e.PreviousSize.Height) return;
+        var previousScrollable = viewer.ExtentHeight - e.PreviousSize.Height;
+        if (viewer.VerticalOffset >= previousScrollable - 2)
+            viewer.ChangeView(null, viewer.ExtentHeight, null, disableAnimation: true);
+    }
+
     private void SourceText_SizeChanged(object sender, SizeChangedEventArgs e) =>
-        AutoScroll(SourceScroll, SourceText.ActualHeight, SourceText.LineHeight, ref _sourceLines, ref _sourceTextDirty);
+        AutoScroll(SourceScroll, SourceText, ref _sourceLines, ref _sourceTextDirty);
 
     private void TranslationText_SizeChanged(object sender, SizeChangedEventArgs e) =>
-        AutoScroll(TranslationScroll, TranslationText.ActualHeight, TranslationText.LineHeight, ref _translationLines, ref _translationTextDirty);
+        AutoScroll(TranslationScroll, TranslationText, ref _translationLines, ref _translationTextDirty);
 
-    private static void AutoScroll(Microsoft.UI.Xaml.Controls.ScrollViewer viewer, double actualHeight, double lineHeight, ref int lastLines, ref bool textDirty)
+    private static void AutoScroll(Microsoft.UI.Xaml.Controls.ScrollViewer viewer, Microsoft.UI.Xaml.Controls.TextBlock text, ref int lastLines, ref bool textDirty)
     {
-        if (lineHeight <= 0) return;
-        var lines = (int)Math.Round(actualHeight / lineHeight);
+        if (text.LineHeight <= 0) return;
+        var lines = (int)Math.Round(text.ActualHeight / text.LineHeight);
 
         // SizeChanged also fires when the window is resized and the text re-wraps;
         // only a text update may scroll — a pure resize just re-baselines the counter.
         if (textDirty)
         {
-            if (lines > lastLines)
+            switch (CaptionScrollPolicy.Decide(lines, lastLines, text.Text.Length))
             {
-                viewer.ChangeView(null, viewer.ExtentHeight, null, disableAnimation: false);
-            }
-            else if (lines < lastLines)
-            {
-                viewer.ChangeView(null, 0, null, disableAnimation: true);
+                case CaptionScrollAction.ShowLastLine:
+                    // A shrink here is the display buffer trimming its head: stay on the newest line.
+                    viewer.ChangeView(null, viewer.ExtentHeight, null, disableAnimation: lines < lastLines);
+                    break;
+                case CaptionScrollAction.ResetToTop:
+                    viewer.ChangeView(null, 0, null, disableAnimation: true);
+                    break;
             }
             textDirty = false;
         }
@@ -318,10 +429,37 @@ public sealed partial class OverlayWindow : WindowEx
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new IntPtr(exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
     }
 
+    // SetBorderAndTitleBar(false, false) still leaves WS_DLGFRAME: a 3px non-client frame that the
+    // transparent backdrop never covers, so it renders as a white outline around the captions.
+    // Drop the frame styles so the client area fills the window, and clear the 1px border
+    // Windows 11 DWM draws around top-level windows (that attribute is a no-op on Windows 10).
+    private void RemoveWindowFrame()
+    {
+        const int GWL_STYLE = -16;
+        const int GWL_EXSTYLE = -20;
+        const long WS_BORDER = 0x00800000;
+        const long WS_DLGFRAME = 0x00400000;
+        const long WS_THICKFRAME = 0x00040000;
+        const long WS_EX_DLGMODALFRAME = 0x00000001;
+        const long WS_EX_WINDOWEDGE = 0x00000100;
+        const int DWMWA_BORDER_COLOR = 34;
+
+        var hwnd = this.GetWindowHandle();
+        var style = GetWindowLongPtrW(hwnd, GWL_STYLE).ToInt64();
+        SetWindowLongPtrW(hwnd, GWL_STYLE, new IntPtr(style & ~(WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)));
+        var exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE).ToInt64();
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new IntPtr(exStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE)));
+        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, SwpNomove | SwpNosize | SwpNozorder | SwpNoactivate | SwpFramechanged);
+
+        var colorNone = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
+        _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref colorNone, sizeof(int));
+    }
+
     private const uint SwpNosize = 0x0001;
     private const uint SwpNomove = 0x0002;
     private const uint SwpNozorder = 0x0004;
     private const uint SwpNoactivate = 0x0010;
+    private const uint SwpFramechanged = 0x0020;
 
     [DllImport("user32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -339,6 +477,9 @@ public sealed partial class OverlayWindow : WindowEx
 
     [DllImport("user32.dll", ExactSpelling = true)]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("dwmapi.dll", ExactSpelling = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [DllImport("user32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

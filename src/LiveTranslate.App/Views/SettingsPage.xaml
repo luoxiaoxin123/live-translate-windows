@@ -118,7 +118,7 @@
                     <Slider
                         Header="{x:Bind loc:L.OpacityLabel}"
                         Maximum="95"
-                        Minimum="10"
+                        Minimum="0"
                         StepFrequency="5"
                         Value="{x:Bind Vm.OpacityPercent, Mode=TwoWay}" />
 
@@ -143,14 +143,6 @@
                     <TextBlock
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text="{x:Bind loc:L.PlayVoiceHint}"
-                        TextWrapping="Wrap" />
-
-                    <ToggleSwitch
-                        Header="{x:Bind loc:L.EchoTargetLabel}"
-                        IsOn="{x:Bind Vm.EchoTargetLanguage, Mode=TwoWay}" />
-                    <TextBlock
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="{x:Bind loc:L.EchoTargetHint}"
                         TextWrapping="Wrap" />
 
                     <Slider

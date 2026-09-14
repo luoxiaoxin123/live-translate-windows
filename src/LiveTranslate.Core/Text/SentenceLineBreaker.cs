@@ -5,7 +5,8 @@ namespace LiveTranslate.Core.Text;
 /// <summary>
 /// Display-layer sentence wrapping. The Live API streams a single paragraph; this inserts
 /// newlines after sentence terminators once the current line is long enough, so short
-/// fragments ("OK." / "好的。") stay packed together.
+/// fragments ("OK." / "好的。") stay packed together. Stray spaces between CJK characters
+/// are removed first (see <see cref="TranscriptAccumulator.CollapseCjkInteriorSpaces"/>).
 ///
 /// Must not be applied to the accumulator buffer — the server sends cumulative rewrites
 /// of the raw text, and injected newlines would break prefix matching.
@@ -17,6 +18,7 @@ public static class SentenceLineBreaker
     public static string Format(string text, int minCharsPerLine = DefaultMinCharsPerLine)
     {
         if (string.IsNullOrEmpty(text) || minCharsPerLine <= 0) return text ?? "";
+        text = TranscriptAccumulator.CollapseCjkInteriorSpaces(text);
 
         var sb = new StringBuilder(text.Length + 8);
         var lineStart = 0;

@@ -73,7 +73,7 @@ public sealed partial class SubtitleViewModel : ObservableObject
             .ToList();
 
         var current = _settings.Current;
-        TargetLanguageIndex = IndexOf(TargetLanguages, current.TargetLanguageCode);
+        TargetLanguageIndex = IndexOf(TargetLanguages, Languages.CanonicalOrDefault(current.TargetLanguageCode));
         AudioSourceIndex = current.AudioSourceMode switch
         {
             AudioSourceMode.Mic => 1,
@@ -131,9 +131,9 @@ public sealed partial class SubtitleViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void Export()
+    private async Task ExportAsync()
     {
-        var (_, message) = _session.ExportLastSession();
+        var (_, message) = await _session.ExportLastSessionAsync();
         ExportMessage = message;
     }
 

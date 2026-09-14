@@ -14,14 +14,10 @@ public sealed partial class TranslatedAudioPlayer : IDisposable
 {
     public const float MaxVolume = 2.0f;
     private const int DefaultRate = 24000;
-    private const int MaxQueuedChunks = 32;
+    // Roomy enough to absorb the server's bursty delivery without dropping speech.
+    private const int MaxQueuedChunks = 128;
 
-    private readonly Channel<(byte[] Pcm, int Rate)> _queue = Channel.CreateBounded<(byte[], int)>(
-        new BoundedChannelOptions(MaxQueuedChunks)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-        });
+    private readonly Channel<(byte[] Pcm, int Rate)> _queue;
 
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _writerTask;
@@ -33,11 +29,22 @@ public sealed partial class TranslatedAudioPlayer : IDisposable
     private float _volume = 0.8f;
     private volatile bool _enabled;
     private long _lastWriteTicks;
+    private int _droppedChunks;
 
     public TranslatedAudioPlayer()
     {
+        _queue = Channel.CreateBounded<(byte[], int)>(
+            new BoundedChannelOptions(MaxQueuedChunks)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+            },
+            _ => Interlocked.Increment(ref _droppedChunks));
         _writerTask = Task.Run(WriterLoopAsync);
     }
+
+    /// <summary>Chunks discarded because the queue was full (diagnostics).</summary>
+    public int DroppedChunks => Volatile.Read(ref _droppedChunks);
 
     /// <summary>True while our own translated audio is (or was in the last ~300 ms) audible.</summary>
     public bool IsActivelyPlaying

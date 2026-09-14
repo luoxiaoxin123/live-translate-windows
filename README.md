@@ -12,12 +12,12 @@ A **real-time subtitle** app for Windows with a native WinUI 3 interface, powere
 |--------|-------------|
 | Subtitles page | Target language (70+ official Live Translate languages; source is auto-detected), audio source, start/stop, status and live preview |
 | Audio source | System audio / microphone / both (per-sample mixing) |
-| Floating subtitles | Always on top, never steals focus, per-pixel transparency; drag by the top handle, resize by the bottom-right handle (font size unchanged); position and size remembered |
-| Display modes | Translation only, or bilingual (source + translation with a divider) |
-| Auto-scroll | Each pane scrolls independently, and **only when a new line wraps** — no jitter while a line is still filling in |
+| Floating subtitles | Always on top, never steals focus, per-pixel transparency; drag by the top bar, resize by the arc in the bottom-right corner (font size unchanged); the top bar (with a close button) stays tucked away until the mouse is over the captions; position and size remembered |
+| Display modes | Translation only, or bilingual (source + translation with a divider). When the audio is already in the target language, the overlay collapses to a single line |
+| Auto-scroll | Each pane scrolls independently, and **only when a new line wraps** — no jitter while a line is still filling in; stays on the newest line when long sessions trim old captions |
 | Audio capture | System audio via WASAPI **process-exclude loopback** (the app's own translated voice is excluded automatically, so no feedback loop; Windows 10 2004+), falling back to classic loopback with capture paused while the translated voice plays. Microphone at 16 kHz PCM |
-| Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol; closes on GoAway and reconnects automatically |
-| Translated voice | Off by default; plays alongside the original audio; volume up to **200%** (digital gain) |
+| Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol; session resumption and context compression are on, so on GoAway it reconnects with the resumption handle and continues the same session |
+| Translated voice | Off by default; plays alongside the original audio; volume up to **200%** (digital gain); stays silent when the audio is already in the target language |
 | Multiple API keys | Up to 10; sessions rotate through them; the connection test checks every key |
 | Export | After stopping, export the session transcript as Markdown to Downloads |
 | UI language | Follows the system: Chinese system → Chinese UI, otherwise English |
@@ -55,7 +55,7 @@ dotnet test  LiveTranslate.slnx            # unit tests
 3. Play foreign-language media or speak into the microphone; the translation appears in the floating window
 4. After **stopping**, export the session as Markdown (saved to Downloads, e.g. `7月26日-14.30-翻译结果.md`)
 
-Floating window tips: drag the **thin bar** at the top to move; drag the **bottom-right handle** to resize (font size stays); font size, background opacity and bilingual mode are in Settings and apply live.
+Floating window tips: hover the captions to reveal the **thin bar** at the top (it tucks away about a second after the mouse leaves); drag the bar to move, click its **×** to close the captions (the transcript stays exportable), and drag the **arc in the bottom-right corner** to resize (font size stays); font size, background opacity and bilingual mode are in Settings and apply live.
 
 ## Project layout
 
@@ -81,8 +81,8 @@ tests/LiveTranslate.Tests/  # xUnit unit tests (protocol / DSP / storage / expor
 ## Known limitations
 
 - DRM-protected or exclusive-mode audio cannot be captured by loopback → use the microphone instead
-- Live Translate only accepts a **target** language; the model detects the source itself
-- Each Live WebSocket lasts about 10 minutes; the app closes on the server's GoAway and opens a fresh connection, keeping the overlay and transcript
+- Live Translate only accepts a **target** language; the model detects the source itself. `echoTargetLanguage` is always on, so audio already in the target language (e.g. a Chinese video with a Chinese target) still gets captions — collapsed to one line, with the translated voice muted
+- Each Live WebSocket lasts about 10 minutes; the app closes on the server's GoAway and reconnects with the resumption handle to continue the same session, keeping the overlay and transcript (if resuming fails it starts a new session)
 - Exports are two full sections (source + translation), not sentence-aligned pairs
 - The preview model and its quota may change; the endpoint and model ID are editable in Settings
 

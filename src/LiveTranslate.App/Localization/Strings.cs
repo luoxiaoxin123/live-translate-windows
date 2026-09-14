@@ -37,8 +37,8 @@ public static class L
     public static string StopSubtitles => T("停止字幕", "Stop subtitles");
     public static string TargetLanguage => T("目标语言", "Target language");
     public static string TargetLanguageHint =>
-        T("源语言由模型自动识别，只需选择译文语言。",
-          "The model detects the source language; pick the language to translate into.");
+        T("源语言由模型自动识别，只需选择译文语言。若原声已是目标语言，将只显示一行字幕。",
+          "The model detects the source language; pick the language to translate into. If the audio is already in that language, captions collapse to a single line.");
     public static string AudioSource => T("声音来源", "Audio source");
     public static string AudioSourceMedia => T("媒体音（本机正在播放的声音）", "System audio (what this PC is playing)");
     public static string AudioSourceMic => T("麦克风", "Microphone");
@@ -51,6 +51,8 @@ public static class L
     public static string ExportFailed(string reason) => T($"导出失败：{reason}", $"Export failed: {reason}");
     public static string NoApiKey => T("请先在「设置」中填写 API Key", "Add an API key in Settings first");
     public static string SessionClosed(string reason) => T($"连接已断开：{reason}", $"Connection closed: {reason}");
+    public static string CloseSubtitles => T("关闭字幕", "Close captions");
+    public static string ClosedFromOverlay => T("已从悬浮窗关闭字幕", "Captions closed from the floating window");
     public static string UsingClassicLoopback =>
         T("提示：正在使用经典内录（系统不支持进程排除）。开启译音时将暂停采集以防回声。",
           "Note: classic loopback in use (process-exclude unsupported); capture pauses while translated audio plays to avoid feedback.");
@@ -79,17 +81,16 @@ public static class L
     public static string FontSizeLabel => T("字号", "Font size");
     public static string OpacityLabel => T("背景不透明度", "Background opacity");
     public static string BilingualLabel => T("双语显示", "Bilingual display");
-    public static string BilingualOn => T("显示原文 + 译文", "Show source + translation");
+    public static string BilingualOn =>
+        T("显示原文 + 译文（原语与目标语相同时自动收成一行）", "Show source + translation (collapses to one line when they match)");
     public static string BilingualOff => T("仅显示译文", "Translation only");
     public static string ResetAppearance => T("重置字幕外观", "Reset subtitle appearance");
 
     public static string SectionVoice => T("译音", "Translated voice");
     public static string PlayVoiceLabel => T("播放译音", "Play translated voice");
-    public static string PlayVoiceHint => T("与原声并行播放翻译语音", "Speak the translation alongside the original audio");
-    public static string EchoTargetLabel => T("已是目标语言时仍复读", "Echo speech already in the target language");
-    public static string EchoTargetHint =>
-        T("关闭（推荐）：片里已是译文语言时保持静默。开启后模型会再念一遍，背景音乐可能进入译音。下次启动或重连后生效。",
-          "Off (recommended): stay silent when the input is already the target language. On, the model parrots it and background music may leak into the voice. Applies on the next start or reconnect.");
+    public static string PlayVoiceHint =>
+        T("与原声并行播放翻译语音；原声已是目标语言时自动不播放",
+          "Speak the translation alongside the original audio; stays silent when the audio is already in the target language");
     public static string VolumeLabel => T("译音音量", "Voice volume");
     public static string VolumeBoostHint => T("超过 100% 为数字增益，可能轻微失真", "Above 100% uses digital gain and may distort slightly");
 

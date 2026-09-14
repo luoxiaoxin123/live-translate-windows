@@ -43,6 +43,11 @@ public sealed class SubtitleSessionService
     private readonly TranscriptAccumulator _fullInput = new(200_000);
     private readonly TranscriptAccumulator _fullOutput = new(200_000);
 
+    // Input already in the target language → one caption line and no echoed voice. Updated on the
+    // client's receive thread under its own lock (in order with the audio chunks it gates).
+    private readonly SameLanguageCaptionMode _sameLanguage = new();
+    private volatile string _targetLanguage = Languages.CanonicalOrDefault(null);
+
     public SessionStatus Status { get; private set; } = SessionStatus.Idle;
     public string StatusMessage { get; private set; } = "";
     public string InputPreview { get; private set; } = "";
@@ -82,6 +87,11 @@ public sealed class SubtitleSessionService
     private int _unexpectedReconnects;
     private bool _rotateKeyNext;
     private CancellationTokenSource? _reconnectCts;
+
+    // Latest server-issued session handle; reconnects pass it so the same session continues.
+    private volatile string? _resumptionHandle;
+    // True while a connection carrying a handle has not reached setupComplete yet.
+    private volatile bool _resumePending;
 
     private const int MaxUnexpectedReconnects = 5;
     private static readonly TimeSpan StableAfter = TimeSpan.FromSeconds(30);
@@ -134,39 +144,52 @@ public sealed class SubtitleSessionService
         _reconnectInFlight = false;
         _rotateKeyNext = false;
         _currentApiKey = apiKey;
+        _resumptionHandle = null;
+        _resumePending = false;
+        lock (_sameLanguage) _sameLanguage.Reset();
         RotateLogIfLarge();
 
         var settings = _settings.Current;
+        _targetLanguage = Languages.CanonicalOrDefault(settings.TargetLanguageCode);
         SetStatus(SessionStatus.Starting, "");
 
         _player = new TranslatedAudioPlayer();
         _player.SetVolume((float)settings.TranslatedVolume);
-        _player.SetEnabled(settings.PlayTranslatedAudio);
+        ApplyTranslatedAudioEnabled(settings);
 
         _overlay = new OverlayWindow(_settings);
+        // The overlay is the caption surface: closing it ends the session (transcripts stay exportable).
+        _overlay.CloseRequested += () => _ = StopAsync(L.ClosedFromOverlay);
         _overlay.ShowNoActivate();
 
         var client = BindClient();
         _client = client;
 
-        await client.ConnectAsync(new SessionConfig(
-            settings.Endpoint,
-            apiKey,
-            settings.ModelId,
-            settings.TargetLanguageCode,
-            settings.EchoTargetLanguage));
+        await client.ConnectAsync(BuildSessionConfig(settings, apiKey));
     }
+
+    // Echo stays on (the SessionConfig default): without it, speech already in the target language
+    // yields no captions at all. Such sessions collapse to one line and mute the echo instead.
+    private SessionConfig BuildSessionConfig(UserSettings settings, string apiKey) =>
+        new(settings.Endpoint, apiKey, settings.ModelId, _targetLanguage, ResumptionHandle: _resumptionHandle);
 
     private LiveTranslateClient BindClient()
     {
         var client = new LiveTranslateClient();
         client.StateChanged += (state, message) => OnClientStateChanged(client, state, message);
         client.GoAwayReceived += timeLeft => OnGoAway(client, timeLeft);
-        client.InputTranscript += text => OnTranscript(client, text, isInput: true);
-        client.OutputTranscript += text => OnTranscript(client, text, isInput: false);
+        client.ResumptionHandleUpdated += handle =>
+        {
+            if (!ReferenceEquals(_client, client)) return;
+            if (_resumptionHandle == null) Log("session resumption handle received");
+            _resumptionHandle = handle;
+        };
+        client.InputTranscript += (text, languageCode) => OnTranscript(client, text, languageCode, isInput: true);
+        client.OutputTranscript += (text, _) => OnTranscript(client, text, null, isInput: false);
         client.AudioChunk += (pcm, mime) =>
         {
-            if (ReferenceEquals(_client, client)) _player?.PlayPcm(pcm, mime);
+            // Same-language echo just repeats the original audio — never play it.
+            if (ReferenceEquals(_client, client) && !_sameLanguage.Enabled) _player?.PlayPcm(pcm, mime);
         };
         client.ErrorOccurred += message => _dispatcher.TryEnqueue(() =>
         {
@@ -183,7 +206,7 @@ public sealed class SubtitleSessionService
 
     private bool _finalizing;
 
-    public async Task StopAsync()
+    public async Task StopAsync(string message = "")
     {
         if (Status is SessionStatus.Idle or SessionStatus.Stopped) return;
         if (_finalizing) return;
@@ -191,12 +214,8 @@ public sealed class SubtitleSessionService
         try
         {
             await TearDownAsync();
-
-            LastInputFull = _fullInput.Text;
-            LastOutputFull = _fullOutput.Text;
-            CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
-            _lastStoppedAt = DateTime.Now;
-            SetStatus(SessionStatus.Stopped, "");
+            KeepLastSession();
+            SetStatus(SessionStatus.Stopped, message);
         }
         finally
         {
@@ -210,22 +229,40 @@ public sealed class SubtitleSessionService
         _settings.Flush();
     }
 
-    public (bool Ok, string Message) ExportLastSession()
+    public async Task<(bool Ok, string Message)> ExportLastSessionAsync()
     {
+        var source = LastInputFull;
+        var translation = LastOutputFull;
+        var stoppedAt = _lastStoppedAt == default ? DateTime.Now : _lastStoppedAt;
+        var chinese = L.IsChinese;
         try
         {
-            var stoppedAt = _lastStoppedAt == default ? DateTime.Now : _lastStoppedAt;
-            var markdown = MarkdownExporter.BuildMarkdown(
-                SentenceLineBreaker.Format(LastInputFull),
-                SentenceLineBreaker.Format(LastOutputFull),
-                stoppedAt);
-            var path = MarkdownExporter.SaveToDownloads(markdown, stoppedAt);
+            // Formatting a long transcript and writing the file stay off the UI thread.
+            var path = await Task.Run(() =>
+            {
+                var markdown = MarkdownExporter.BuildMarkdown(
+                    SentenceLineBreaker.Format(source),
+                    SentenceLineBreaker.Format(translation),
+                    stoppedAt,
+                    chinese);
+                return MarkdownExporter.SaveToDownloads(markdown, stoppedAt, chinese: chinese);
+            });
             return (true, L.ExportedTo(path));
         }
         catch (Exception ex)
         {
             return (false, L.ExportFailed(ex.Message));
         }
+    }
+
+    private void KeepLastSession()
+    {
+        LastInputFull = _fullInput.Text;
+        var output = _fullOutput.Text;
+        // A same-language session may have no separate translation; its source is the result.
+        LastOutputFull = string.IsNullOrWhiteSpace(output) && _sameLanguage.Enabled ? LastInputFull : output;
+        CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
+        _lastStoppedAt = DateTime.Now;
     }
 
     private void OnClientStateChanged(LiveTranslateClient client, LiveConnectionState state, string? message)
@@ -254,6 +291,11 @@ public sealed class SubtitleSessionService
     private void OnClientReady()
     {
         _reconnectInFlight = false;
+        if (_resumePending)
+        {
+            _resumePending = false;
+            Log("session resumed");
+        }
         if (!_captureStarted)
         {
             StartCapturePipeline();
@@ -277,6 +319,15 @@ public sealed class SubtitleSessionService
     private void HandleDisconnect(LiveTranslateClient client, string message)
     {
         if (!ReferenceEquals(_client, client) || _finalizing || !IsActive) return;
+
+        if (_resumePending)
+        {
+            // The resumed connection died before setup completed (e.g. an expired or rejected
+            // handle). Retry as a new session so a stale handle can't trap us in a retry loop.
+            _resumePending = false;
+            _resumptionHandle = null;
+            Log("resume failed before setup; next attempt starts a new session");
+        }
 
         if (LiveTranslateClient.IsQuotaError(message))
             _rotateKeyNext = true;
@@ -355,12 +406,10 @@ public sealed class SubtitleSessionService
                 return;
             }
 
-            await replacement.ConnectAsync(new SessionConfig(
-                settings.Endpoint,
-                key,
-                settings.ModelId,
-                settings.TargetLanguageCode,
-                settings.EchoTargetLanguage)).ConfigureAwait(false);
+            var config = BuildSessionConfig(settings, key);
+            _resumePending = config.ResumptionHandle != null;
+            Log($"reconnect connecting resume={_resumePending}");
+            await replacement.ConnectAsync(config).ConfigureAwait(false);
 
             if (_finalizing || !ReferenceEquals(_client, replacement))
             {
@@ -404,10 +453,7 @@ public sealed class SubtitleSessionService
         try
         {
             await TearDownAsync();
-            LastInputFull = _fullInput.Text;
-            LastOutputFull = _fullOutput.Text;
-            CanExport = LastInputFull.Length > 0 || LastOutputFull.Length > 0;
-            _lastStoppedAt = DateTime.Now;
+            KeepLastSession();
             SetStatus(SessionStatus.Error, message);
         }
         finally
@@ -508,7 +554,7 @@ public sealed class SubtitleSessionService
         });
     }
 
-    private void OnTranscript(LiveTranslateClient client, string text, bool isInput)
+    private void OnTranscript(LiveTranslateClient client, string text, string? languageCode, bool isInput)
     {
         if (!ReferenceEquals(_client, client)) return;
 
@@ -516,6 +562,7 @@ public sealed class SubtitleSessionService
         {
             _overlayInput.Append(text);
             _fullInput.Append(text);
+            DetectSameLanguage(languageCode);
         }
         else
         {
@@ -526,8 +573,33 @@ public sealed class SubtitleSessionService
         var logged = isInput ? Interlocked.Increment(ref _loggedInputs) : Interlocked.Increment(ref _loggedOutputs);
         if (logged is 1 or 10 or 50) Log($"transcript {(isInput ? "in" : "out")} #{logged}: {Tail(text, 60)}");
 
+        // The flush also re-syncs the overlay layout when same-language mode flipped.
         ScheduleTranscriptFlush();
     }
+
+    /// <summary>
+    /// Runs on the receive thread, so the voice is muted before the next echoed audio chunk
+    /// from the same connection is handled.
+    /// </summary>
+    private void DetectSameLanguage(string? languageCode)
+    {
+        var target = _targetLanguage;
+        bool? toggled;
+        lock (_sameLanguage)
+        {
+            toggled = string.IsNullOrWhiteSpace(languageCode)
+                ? _sameLanguage.OnInputTextFallback(_overlayInput.Text, target, outputEmpty: _overlayOutput.Text.Length == 0)
+                : _sameLanguage.OnDetectedInputLanguage(languageCode, target);
+        }
+        if (toggled is not { } enabled) return;
+
+        Log($"same-language captions {(enabled ? "on" : "off")} (detected={languageCode ?? "?"}, target={target})");
+        ApplyTranslatedAudioEnabled(_settings.Current);
+    }
+
+    /// <summary>Plays the translated voice only when the user wants it and the input isn't already the target language.</summary>
+    private void ApplyTranslatedAudioEnabled(UserSettings settings) =>
+        _player?.SetEnabled(_sameLanguage.ShouldPlayTranslatedAudio(settings.PlayTranslatedAudio));
 
     private void ScheduleTranscriptFlush()
     {
@@ -555,9 +627,22 @@ public sealed class SubtitleSessionService
 
         var source = SentenceLineBreaker.Format(_overlayInput.Text);
         var translation = SentenceLineBreaker.Format(_overlayOutput.Text);
-        InputPreview = Tail(source, 300);
-        OutputPreview = Tail(translation, 300);
-        _overlay?.SetTexts(source, translation);
+        var sameLanguage = _sameLanguage.Enabled;
+        _overlay?.SetSameLanguageMode(sameLanguage);
+        if (sameLanguage)
+        {
+            // The source already reads in the target language: show it as the only caption line.
+            var line = string.IsNullOrWhiteSpace(source) ? translation : source;
+            InputPreview = "";
+            OutputPreview = Tail(line, 300);
+            _overlay?.SetTexts("", line);
+        }
+        else
+        {
+            InputPreview = Tail(source, 300);
+            OutputPreview = Tail(translation, 300);
+            _overlay?.SetTexts(source, translation);
+        }
         TranscriptChanged?.Invoke();
     }
 
@@ -580,6 +665,7 @@ public sealed class SubtitleSessionService
 
         var player = _player;
         _player = null;
+        if (player is { DroppedChunks: > 0 }) Log($"translated audio dropped {player.DroppedChunks} chunks (queue full)");
 
         await Task.Run(() =>
         {
@@ -602,7 +688,7 @@ public sealed class SubtitleSessionService
         _dispatcher.TryEnqueue(() =>
         {
             _player?.SetVolume((float)settings.TranslatedVolume);
-            _player?.SetEnabled(settings.PlayTranslatedAudio);
+            ApplyTranslatedAudioEnabled(settings);
             _overlay?.ApplyAppearance(settings);
         });
     }

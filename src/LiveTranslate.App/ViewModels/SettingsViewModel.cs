@@ -72,9 +72,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     public partial bool PlayTranslatedAudio { get; set; }
 
     [ObservableProperty]
-    public partial bool EchoTargetLanguage { get; set; }
-
-    [ObservableProperty]
     public partial double VolumePercent { get; set; }
 
     [ObservableProperty]
@@ -109,7 +106,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         Bilingual = current.Bilingual;
         BilingualSummary = current.Bilingual ? L.BilingualOn : L.BilingualOff;
         PlayTranslatedAudio = current.PlayTranslatedAudio;
-        EchoTargetLanguage = current.EchoTargetLanguage;
         VolumePercent = Math.Round(current.TranslatedVolume * 100);
         VolumeBoosted = VolumePercent > 100;
         _initializing = false;
@@ -201,8 +197,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
                 using var client = new LiveTranslateClient();
                 var (success, message) = await client.TestConnectionAsync(new SessionConfig(
-                    settings.Endpoint, keys[i], settings.ModelId, settings.TargetLanguageCode,
-                    settings.EchoTargetLanguage),
+                    settings.Endpoint, keys[i], settings.ModelId, Languages.CanonicalOrDefault(settings.TargetLanguageCode)),
                     cancellationToken: cancellationToken);
                 if (success)
                 {
@@ -267,7 +262,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnOpacityPercentChanged(double value)
     {
         if (_initializing) return;
-        _settings.Update(s => s with { BackgroundOpacity = Math.Clamp(value / 100.0, 0.10, 0.95) });
+        _settings.Update(s => s with { BackgroundOpacity = Math.Clamp(value / 100.0, 0, 0.95) });
     }
 
     partial void OnBilingualChanged(bool value)
@@ -292,12 +287,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (_initializing) return;
         _settings.Update(s => s with { PlayTranslatedAudio = value });
-    }
-
-    partial void OnEchoTargetLanguageChanged(bool value)
-    {
-        if (_initializing) return;
-        _settings.Update(s => s with { EchoTargetLanguage = value });
     }
 
     partial void OnVolumePercentChanged(double value)

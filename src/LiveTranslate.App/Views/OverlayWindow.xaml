@@ -4,12 +4,64 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:winuiex="using:WinUIEx">
 
-    <Grid Background="Transparent">
+    <Grid
+        x:Name="Root"
+        Background="Transparent"
+        PointerEntered="Root_PointerActivity"
+        PointerMoved="Root_PointerActivity">
+        <Grid.Resources>
+            <!-- Control strip (grabber + close): the row grows from the caption padding (10) to its full height (22). -->
+            <Storyboard x:Name="ShowControlsStoryboard">
+                <DoubleAnimation
+                    EnableDependentAnimation="True"
+                    Storyboard.TargetName="Grabber"
+                    Storyboard.TargetProperty="Height"
+                    To="22"
+                    Duration="0:0:0.2">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+                <DoubleAnimation
+                    Storyboard.TargetName="GrabberPill"
+                    Storyboard.TargetProperty="Opacity"
+                    To="1"
+                    Duration="0:0:0.15" />
+                <DoubleAnimation
+                    Storyboard.TargetName="CloseButton"
+                    Storyboard.TargetProperty="Opacity"
+                    To="1"
+                    Duration="0:0:0.15" />
+            </Storyboard>
+            <Storyboard x:Name="HideControlsStoryboard">
+                <DoubleAnimation
+                    EnableDependentAnimation="True"
+                    Storyboard.TargetName="Grabber"
+                    Storyboard.TargetProperty="Height"
+                    To="10"
+                    Duration="0:0:0.2">
+                    <DoubleAnimation.EasingFunction>
+                        <CubicEase EasingMode="EaseOut" />
+                    </DoubleAnimation.EasingFunction>
+                </DoubleAnimation>
+                <DoubleAnimation
+                    Storyboard.TargetName="GrabberPill"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0"
+                    Duration="0:0:0.14" />
+                <DoubleAnimation
+                    Storyboard.TargetName="CloseButton"
+                    Storyboard.TargetProperty="Opacity"
+                    To="0"
+                    Duration="0:0:0.14" />
+            </Storyboard>
+        </Grid.Resources>
+
         <Border x:Name="Bg" Background="Black" CornerRadius="12" Opacity="0.65" />
 
         <Grid Margin="12,0,12,10">
             <Grid.RowDefinitions>
-                <RowDefinition Height="22" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="SourceRowDef" Height="0" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -18,19 +70,48 @@
             <Border
                 x:Name="Grabber"
                 Grid.Row="0"
+                Height="22"
                 Background="Transparent"
                 PointerPressed="Grabber_PointerPressed"
                 PointerMoved="Grabber_PointerMoved"
                 PointerReleased="Grabber_PointerReleased"
                 PointerCanceled="Grabber_PointerReleased"
                 PointerCaptureLost="Grabber_PointerReleased">
-                <Border
-                    Width="48"
-                    Height="4"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    Background="#73FFFFFF"
-                    CornerRadius="2" />
+                <Grid>
+                    <Border
+                        x:Name="GrabberPill"
+                        Width="48"
+                        Height="4"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#73FFFFFF"
+                        CornerRadius="2" />
+                    <!-- Ends the caption session; the button handles its own press, so it never starts a drag. -->
+                    <Button
+                        x:Name="CloseButton"
+                        Width="26"
+                        Margin="0,0,-6,0"
+                        Padding="0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Stretch"
+                        BorderThickness="0"
+                        Click="CloseButton_Click"
+                        CornerRadius="4"
+                        IsTabStop="False">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#26FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#40FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonForeground" Color="#BEFFFFFF" />
+                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="White" />
+                            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="White" />
+                            <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                        </Button.Resources>
+                        <FontIcon FontSize="10" Glyph="&#xE8BB;" />
+                    </Button>
+                </Grid>
             </Border>
 
             <ScrollViewer
@@ -40,6 +121,7 @@
                 HorizontalScrollMode="Disabled"
                 IsTabStop="False"
                 PointerWheelChanged="SourceScroll_PointerWheelChanged"
+                SizeChanged="CaptionScroll_SizeChanged"
                 VerticalScrollBarVisibility="Hidden"
                 VerticalScrollMode="Enabled"
                 Visibility="Collapsed">
@@ -66,6 +148,7 @@
                 HorizontalScrollMode="Disabled"
                 IsTabStop="False"
                 PointerWheelChanged="TranslationScroll_PointerWheelChanged"
+                SizeChanged="CaptionScroll_SizeChanged"
                 VerticalScrollBarVisibility="Hidden"
                 VerticalScrollMode="Enabled">
                 <TextBlock
@@ -77,6 +160,7 @@
             </ScrollViewer>
         </Grid>
 
+        <!-- Always-visible resize handle: a thin quarter arc concentric with the backdrop's 12px corner. -->
         <Border
             x:Name="ResizeHandle"
             Width="24"
@@ -90,12 +174,11 @@
             PointerCanceled="ResizeHandle_PointerReleased"
             PointerCaptureLost="ResizeHandle_PointerReleased">
             <Path
-                Margin="0,0,5,5"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Bottom"
-                Data="M 0,12 L 12,0 M 5,13 L 13,5 M 10,14 L 14,10"
-                Stroke="#88FFFFFF"
-                StrokeThickness="1.5" />
+                Data="M 20.5,12 A 8.5,8.5 0 0 1 12,20.5"
+                Stroke="#A5FFFFFF"
+                StrokeEndLineCap="Round"
+                StrokeStartLineCap="Round"
+                StrokeThickness="2.2" />
         </Border>
     </Grid>
 </winuiex:WindowEx>
