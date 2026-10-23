@@ -359,7 +359,9 @@ public sealed class SubtitleSessionService
             }
         }
 
-        SetStatus(SessionStatus.Reconnecting, expected ? "" : reason);
+        // goAway is the planned ~10-minute connection rotation, not a failure: switch quietly and
+        // keep showing Running. Audio captured meanwhile is buffered and replayed after setup.
+        if (!expected) SetStatus(SessionStatus.Reconnecting, reason);
         Log($"reconnect expected={expected} unexpected={_unexpectedReconnects}");
 
         var delay = expected || _unexpectedReconnects <= 0
@@ -369,6 +371,9 @@ public sealed class SubtitleSessionService
         var old = _client;
         var replacement = BindClient();
         _client = replacement;
+        // Capture now feeds the replacement; carry over what the old client buffered since its
+        // connection stopped taking audio (goAway / drop) so the handover loses no speech.
+        if (old != null) replacement.TakePendingAudioFrom(old);
 
         var cts = new CancellationTokenSource();
         _reconnectCts?.Cancel();

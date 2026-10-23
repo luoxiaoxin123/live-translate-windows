@@ -205,6 +205,68 @@ public class LiveProtocolTests
     }
 }
 
+public class PendingAudioTests
+{
+    private static byte[] Chunk(byte value, int size) => Enumerable.Repeat(value, size).ToArray();
+
+    [Fact]
+    public void Drain_CoalescesChunksInOrder()
+    {
+        var buffer = new PendingAudioBuffer(maxBytes: 100, maxFrameBytes: 10);
+        buffer.Add(Chunk(1, 4));
+        buffer.Add(Chunk(2, 4));
+        buffer.Add(Chunk(3, 4));
+
+        var frames = buffer.Drain();
+
+        Assert.Equal(2, frames.Count);
+        Assert.Equal(Chunk(1, 4).Concat(Chunk(2, 4)), frames[0]);
+        Assert.Equal(Chunk(3, 4), frames[1]);
+        Assert.Equal(0, buffer.SizeBytes);
+    }
+
+    [Fact]
+    public void Add_DropsOldestChunksBeyondCapacity()
+    {
+        var buffer = new PendingAudioBuffer(maxBytes: 8, maxFrameBytes: 100);
+        buffer.Add(Chunk(1, 4));
+        buffer.Add(Chunk(2, 4));
+        buffer.Add(Chunk(3, 4));
+
+        Assert.Equal(8, buffer.SizeBytes);
+        Assert.Equal(4, buffer.DroppedBytes);
+        Assert.Equal(Chunk(2, 4).Concat(Chunk(3, 4)), Assert.Single(buffer.Drain()));
+        Assert.Equal(0, buffer.DroppedBytes);
+    }
+
+    [Fact]
+    public void Prepend_PutsCarriedAudioFirstAndKeepsNewestWithinCapacity()
+    {
+        var buffer = new PendingAudioBuffer(maxBytes: 8, maxFrameBytes: 100);
+        buffer.Add(Chunk(3, 4));
+        buffer.Prepend([Chunk(1, 4), Chunk(2, 4)]);
+
+        Assert.Equal(Chunk(2, 4).Concat(Chunk(3, 4)), Assert.Single(buffer.Drain()));
+    }
+
+    [Fact]
+    public void Client_BuffersAudioUntilSetupAndHandsItToReplacement()
+    {
+        var old = new LiveTranslateClient();
+        old.SendPcm16Le(Chunk(1, 320));
+        old.HandleMessage("""{"goAway":{"timeLeft":"5s"}}""");
+        old.SendPcm16Le(Chunk(2, 320));
+        Assert.Equal(640, old.PendingAudioBytes);
+
+        var replacement = new LiveTranslateClient();
+        replacement.SendPcm16Le(Chunk(3, 320));
+        replacement.TakePendingAudioFrom(old);
+
+        Assert.Equal(0, old.PendingAudioBytes);
+        Assert.Equal(960, replacement.PendingAudioBytes);
+    }
+}
+
 public class AudioDspTests
 {
     [Fact]

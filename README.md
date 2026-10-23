@@ -82,7 +82,7 @@ tests/LiveTranslate.Tests/  # xUnit unit tests (protocol / DSP / storage / expor
 
 - DRM-protected or exclusive-mode audio cannot be captured by loopback → use the microphone instead
 - Live Translate only accepts a **target** language; the model detects the source itself. `echoTargetLanguage` is always on, so audio already in the target language (e.g. a Chinese video with a Chinese target) still gets captions — collapsed to one line, with the translated voice muted
-- Each Live WebSocket lasts about 10 minutes; the app closes on the server's GoAway and reconnects with the resumption handle to continue the same session, keeping the overlay and transcript (if resuming fails it starts a new session)
+- Each Live WebSocket lasts about 10 minutes; the app closes on the server's GoAway and reconnects with the resumption handle to continue the same session, keeping the overlay and transcript (if resuming fails it starts a new session). Audio captured during the switch is buffered and replayed on the new connection, so no speech is lost
 - Exports are two full sections (source + translation), not sentence-aligned pairs
 - The preview model and its quota may change; the endpoint and model ID are editable in Settings
 

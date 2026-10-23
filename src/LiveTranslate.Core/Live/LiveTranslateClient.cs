@@ -35,13 +35,26 @@ public sealed class LiveTranslateClient : IDisposable
 {
     private const string AudioMimeType = "audio/pcm;rate=16000";
 
+    // 16 kHz mono PCM16 is 32 bytes per millisecond.
+    private const int BytesPerMs = 32;
+    private const int MaxPendingAudioMs = 10_000;
+    private const int ReplayFrameMs = 1_000;
+
     private readonly object _stateLock = new();
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _sessionCts;
     private Channel<byte[]>? _sendQueue;
+    // Gate for live audio: true only while the current connection can take it.
     private volatile bool _setupComplete;
+    // The current connection reached setupComplete (stays true once it closes).
+    private volatile bool _connectionWasReady;
     private volatile bool _intentionalClose;
     private volatile bool _goAway;
+
+    // Audio captured while no connection is ready (rotation / reconnect), replayed after the next
+    // setupComplete. The lock also orders that replay ahead of live chunks.
+    private readonly object _pendingLock = new();
+    private readonly PendingAudioBuffer _pendingAudio = new(MaxPendingAudioMs * BytesPerMs, ReplayFrameMs * BytesPerMs);
 
     public LiveConnectionState State { get; private set; } = LiveConnectionState.Idle;
 
@@ -68,6 +81,7 @@ public sealed class LiveTranslateClient : IDisposable
 
         _intentionalClose = false;
         _setupComplete = false;
+        _connectionWasReady = false;
         _goAway = false;
         SetState(LiveConnectionState.Connecting, null);
 
@@ -121,11 +135,60 @@ public sealed class LiveTranslateClient : IDisposable
         _ = Task.Run(() => SendLoopAsync(socket, sendQueue.Reader, cts.Token));
     }
 
-    /// <summary>Queues one 16 kHz mono PCM16 LE chunk; silently dropped unless the session is Ready.</summary>
+    /// <summary>
+    /// Queues one 16 kHz mono PCM16 LE chunk. While no connection is ready (before setupComplete,
+    /// after goAway or a drop) the chunk is buffered instead and replayed once a connection
+    /// completes setup — see <see cref="TakePendingAudioFrom"/> for carrying it across clients.
+    /// </summary>
     public void SendPcm16Le(byte[] pcm)
     {
-        if (pcm.Length == 0 || !_setupComplete || State != LiveConnectionState.Ready) return;
-        _sendQueue?.Writer.TryWrite(pcm);
+        if (pcm.Length == 0) return;
+        lock (_pendingLock)
+        {
+            var queue = _sendQueue;
+            if (!_setupComplete || queue == null)
+            {
+                _pendingAudio.Add(pcm);
+                return;
+            }
+            queue.Writer.TryWrite(pcm);
+        }
+    }
+
+    /// <summary>
+    /// Moves audio that <paramref name="previous"/> buffered after its connection stopped taking
+    /// audio ahead of anything already buffered here, so a connection handover loses nothing.
+    /// </summary>
+    public void TakePendingAudioFrom(LiveTranslateClient previous)
+    {
+        if (ReferenceEquals(previous, this)) return;
+        List<byte[]> carried;
+        lock (previous._pendingLock) carried = previous._pendingAudio.TakeChunks();
+        if (carried.Count == 0) return;
+        lock (_pendingLock) _pendingAudio.Prepend(carried);
+    }
+
+    internal int PendingAudioBytes
+    {
+        get
+        {
+            lock (_pendingLock) return _pendingAudio.SizeBytes;
+        }
+    }
+
+    /// <summary>Replays buffered audio, then lets live audio through.</summary>
+    private void CompleteSetup()
+    {
+        lock (_pendingLock)
+        {
+            var queue = _sendQueue;
+            if (queue != null)
+            {
+                foreach (var frame in _pendingAudio.Drain()) queue.Writer.TryWrite(frame);
+            }
+            _setupComplete = true;
+            _connectionWasReady = true;
+        }
     }
 
     public async Task CloseAsync()
@@ -274,7 +337,9 @@ public sealed class LiveTranslateClient : IDisposable
     private void HandleClosed(ClientWebSocket socket, string reason)
     {
         if (!ReferenceEquals(_socket, socket) || _intentionalClose) return;
-        if (_setupComplete)
+        // Buffer from here on so the next connection can replay it.
+        _setupComplete = false;
+        if (_connectionWasReady)
         {
             SetState(LiveConnectionState.Closed, reason);
         }
@@ -294,7 +359,7 @@ public sealed class LiveTranslateClient : IDisposable
 
             if (TryGet(root, out _, "setupComplete", "setup_complete"))
             {
-                _setupComplete = true;
+                CompleteSetup();
                 SetState(LiveConnectionState.Ready, null);
                 return;
             }
@@ -318,7 +383,8 @@ public sealed class LiveTranslateClient : IDisposable
 
             if (TryGet(root, out var goAway, "goAway", "go_away"))
             {
-                // Stop sending immediately; the receive loop closes the socket after this returns.
+                // Stop sending (later audio is buffered for the next connection); the receive loop
+                // closes the socket after this returns.
                 _setupComplete = false;
                 _goAway = true;
                 GoAwayReceived?.Invoke(ParseTimeLeft(goAway));
@@ -392,6 +458,7 @@ public sealed class LiveTranslateClient : IDisposable
 
     private void Fail(string message)
     {
+        _setupComplete = false;
         ErrorOccurred?.Invoke(message);
         SetState(LiveConnectionState.Failed, message);
     }
