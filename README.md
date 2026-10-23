@@ -1,5 +1,9 @@
 # Live Translate for Windows
 
+> [!WARNING]
+> ⚠️ **NOTE — Google's 10-minute connection limit** ⚠️
+> The Gemini Live API terminates **every WebSocket connection after ~10 minutes**. This is a **Google server-side restriction** ([official docs](https://ai.google.dev/gemini-api/docs/live-api/session-management)), not a bug in this app. The app handles it automatically: on the server's advance notice it **switches to a fresh connection and resumes the same session**, buffering the audio captured during the switch and replaying it afterwards, so captions continue without lost speech — at most a short delay roughly every 10 minutes.
+
 [简体中文](README.zh-CN.md)
 
 Android version: [Live Translate for Android](https://github.com/luoxiaoxin123/live-translate)
@@ -18,7 +22,7 @@ A **real-time subtitle** app for Windows with a native WinUI 3 interface, powere
 | Audio capture | System audio via WASAPI **process-exclude loopback** (the app's own translated voice is excluded automatically, so no feedback loop; Windows 10 2004+), falling back to classic loopback with capture paused while the translated voice plays. Microphone at 16 kHz PCM |
 | Live API | WebSocket + `translationConfig`, aligned with the official Live Translate protocol; session resumption and context compression are on, so on GoAway it reconnects with the resumption handle and continues the same session |
 | Translated voice | Off by default; plays alongside the original audio; volume up to **200%** (digital gain); stays silent when the audio is already in the target language |
-| Multiple API keys | Up to 10; sessions rotate through them; the connection test checks every key |
+| Multiple API keys | Up to 10; one key is used until it fails (e.g. invalid or out of quota), then the next takes over; the connection test checks every key |
 | Export | After stopping, export the session transcript as Markdown to Downloads |
 | UI language | Follows the system: Chinese system → Chinese UI, otherwise English |
 

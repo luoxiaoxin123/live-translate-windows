@@ -691,15 +691,33 @@ public class MarkdownExporterTests
 
 public class DataStoreTests
 {
+    [Theory]
+    [InlineData("k1", 0, 1)]
+    [InlineData("k3", 0, 0)]  // wraps around
+    [InlineData("gone", 2, 2)] // edited away: the active key takes over
+    public void ApiKeyStore_FailoverIndex(string failed, int activeIndex, int expected)
+    {
+        Assert.Equal(expected, ApiKeyStore.FailoverIndex(["k1", "k2", "k3"], failed, activeIndex));
+    }
+
     [Fact]
-    public void ApiKeyStore_DpapiRoundTrip_And_Rotation()
+    public void KeyErrors_AreQuotaAndInvalidKey()
+    {
+        Assert.True(LiveTranslateClient.IsKeyError("Server error: code 429 — RESOURCE_EXHAUSTED — You exceeded your current quota"));
+        Assert.True(LiveTranslateClient.IsKeyError("Server closed the connection (PolicyViolation): API key not valid. Please pass a valid API key."));
+        Assert.False(LiveTranslateClient.IsKeyError("Connection lost: The remote party closed the WebSocket connection"));
+        Assert.False(LiveTranslateClient.IsKeyError("Server error: INVALID_ARGUMENT — model not found"));
+    }
+
+    [Fact]
+    public void ApiKeyStore_DpapiRoundTrip_And_Failover()
     {
         var path = Path.Combine(Path.GetTempPath(), "lt-test-" + Guid.NewGuid().ToString("N"), "keys.dat");
         try
         {
             var store = new ApiKeyStore(path);
             Assert.False(store.HasKeys());
-            Assert.Null(store.NextRotatedKey());
+            Assert.Null(store.ActiveKey());
 
             store.SaveKeys(new[] { " k1 ", "", "k2", "k3" });
             Assert.Equal(new[] { "k1", "k2", "k3" }, store.GetKeys());
@@ -712,10 +730,13 @@ public class DataStoreTests
             var reloaded = new ApiKeyStore(path);
             Assert.Equal(new[] { "k1", "k2", "k3" }, reloaded.GetKeys());
 
-            Assert.Equal("k1", reloaded.NextRotatedKey());
-            Assert.Equal("k2", reloaded.NextRotatedKey());
-            Assert.Equal("k3", reloaded.NextRotatedKey());
-            Assert.Equal("k1", reloaded.NextRotatedKey());
+            // Sticks to one key until it fails, then moves to the next (wrapping).
+            Assert.Equal("k1", reloaded.ActiveKey());
+            Assert.Equal("k1", reloaded.ActiveKey());
+            Assert.Equal("k2", reloaded.FailoverFrom("k1"));
+            Assert.Equal("k2", reloaded.ActiveKey());
+            Assert.Equal("k3", reloaded.FailoverFrom("k2"));
+            Assert.Equal("k1", reloaded.FailoverFrom("k3"));
         }
         finally
         {

@@ -1,5 +1,9 @@
 # 实时翻译（Live Translate for Windows）
 
+> [!WARNING]
+> ⚠️ **注意：谷歌接口 10 分钟连接限制** ⚠️
+> Gemini Live API 的**每条 WebSocket 连接约 10 分钟就会被服务端断开**，这是**谷歌服务端的限制**（[官方文档](https://ai.google.dev/gemini-api/docs/live-api/session-management)），不是本应用的 bug。应用会自动处理：收到服务端的提前通知后**切换到新连接并续接同一会话**，切换期间采集的音频先缓存、连上后补发，字幕不会漏话——每隔约 10 分钟最多出现一次短暂延迟。
+
 [English](README.md)
 
 安卓版：[Live Translate for Android](https://github.com/luoxiaoxin123/live-translate)
@@ -18,7 +22,7 @@
 | 音频采集 | 媒体音：WASAPI **进程排除 loopback**（自动排除本应用的译音，杜绝回声循环；Win10 2004+）；不支持时回退经典 loopback + 播译音时暂停采集。麦克风：16 kHz PCM |
 | Live API | WebSocket + `translationConfig`，对齐官方 Live Translate 协议；开启会话续接与上下文压缩，收到 GoAway 后带续接凭证换新连接，接着原会话翻译 |
 | 译音 | 默认关闭；与原声并行；音量最高 **200%**（数字增益）；原声已是目标语言时自动不播放 |
-| 多 API Key | 最多 10 个；会话启动按顺序轮询；连接测试会逐个测试 |
+| 多 API Key | 最多 10 个；固定使用一个 Key，报错（如失效、额度用完）后自动切换到下一个；连接测试会逐个测试 |
 | 导出 | 停止后导出本次原文/译文为 Markdown 到「下载」目录 |
 | 语言 | 界面跟随系统：中文系统 → 中文界面，否则英文 |
 

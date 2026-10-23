@@ -529,13 +529,25 @@ public sealed class LiveTranslateClient : IDisposable
         return !IsFatalFailure(reason);
     }
 
-    /// <summary>Quota / rate-limit: retry after rotating to the next stored API key.</summary>
+    /// <summary>Quota / rate-limit errors.</summary>
     public static bool IsQuotaError(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason)) return false;
         return ContainsIgnoreCase(reason, "RESOURCE_EXHAUSTED")
                || ContainsIgnoreCase(reason, "quota")
                || ContainsIgnoreCase(reason, "429");
+    }
+
+    /// <summary>Failures tied to the API key itself (quota, invalid key): fail over to the next stored key.</summary>
+    public static bool IsKeyError(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        return IsQuotaError(reason)
+               || ContainsIgnoreCase(reason, "invalid api key")
+               || ContainsIgnoreCase(reason, "API_KEY_INVALID")
+               || ContainsIgnoreCase(reason, "API key not valid")
+               || ContainsIgnoreCase(reason, "UNAUTHENTICATED")
+               || ContainsIgnoreCase(reason, "PERMISSION_DENIED");
     }
 
     private static bool IsFatalFailure(string reason) =>

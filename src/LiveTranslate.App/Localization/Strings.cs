@@ -24,6 +24,7 @@ public static class L
     public static string StatusStarting => T("正在连接…", "Connecting…");
     public static string StatusRunning => T("字幕运行中", "Subtitles running");
     public static string StatusReconnecting => T("正在重连…", "Reconnecting…");
+    public static string SwitchingKey(string reason) => T($"API Key 不可用（{reason}），正在切换到下一个 Key…", $"API key failed ({reason}) — switching to the next key…");
     public static string StatusStopped => T("已停止", "Stopped");
     public static string StatusError => T("出错", "Error");
     public static string ReconnectGaveUp =>

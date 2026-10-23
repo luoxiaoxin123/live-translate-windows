@@ -6,7 +6,8 @@ namespace LiveTranslate.Core.Data;
 
 /// <summary>
 /// Stores up to 10 API keys DPAPI-encrypted (current user) at %LocalAppData%\LiveTranslate\apikeys.dat.
-/// Sessions rotate through the keys round-robin; the rotation index is in-memory only.
+/// Sessions stick to the active key and only fail over to the next one when it errors or runs out
+/// of quota; the active index is in-memory only.
 /// </summary>
 public sealed class ApiKeyStore
 {
@@ -15,7 +16,7 @@ public sealed class ApiKeyStore
     private readonly string _filePath;
     private readonly object _lock = new();
     private List<string>? _cache;
-    private int _rotationIndex = -1;
+    private int _activeIndex;
 
     public ApiKeyStore(string? filePath = null)
     {
@@ -60,16 +61,40 @@ public sealed class ApiKeyStore
         }
     }
 
-    /// <summary>Round-robin: each call returns the next stored key. Null when none are stored.</summary>
-    public string? NextRotatedKey()
+    /// <summary>The key sessions use until it fails. Null when none are stored.</summary>
+    public string? ActiveKey()
     {
         lock (_lock)
         {
             _cache ??= LoadKeys();
             if (_cache.Count == 0) return null;
-            _rotationIndex = (_rotationIndex + 1) % _cache.Count;
-            return _cache[_rotationIndex];
+            return _cache[Math.Clamp(_activeIndex, 0, _cache.Count - 1)];
         }
+    }
+
+    /// <summary>
+    /// <paramref name="failed"/> errored or ran out of quota: make the key after it active and
+    /// return that, or null when there is no other key to fall back to.
+    /// </summary>
+    public string? FailoverFrom(string failed)
+    {
+        lock (_lock)
+        {
+            _cache ??= LoadKeys();
+            if (_cache.Count < 2) return null;
+            _activeIndex = FailoverIndex(_cache, failed, _activeIndex);
+            return _cache[_activeIndex];
+        }
+    }
+
+    /// <summary>
+    /// Index of the key after <paramref name="failed"/>, wrapping. If the keys were edited and
+    /// <paramref name="failed"/> is gone, the current active key (a different one) takes over.
+    /// </summary>
+    internal static int FailoverIndex(IReadOnlyList<string> keys, string failed, int activeIndex)
+    {
+        var failedIndex = keys.ToList().IndexOf(failed);
+        return failedIndex >= 0 ? (failedIndex + 1) % keys.Count : Math.Clamp(activeIndex, 0, keys.Count - 1);
     }
 
     public bool HasKeys() => GetKeys().Count > 0;

@@ -85,7 +85,8 @@ public sealed class SubtitleSessionService
     private string? _currentApiKey;
     private bool _reconnectInFlight;
     private int _unexpectedReconnects;
-    private bool _rotateKeyNext;
+    // Keys that failed since the last successful setup; once all have, give up.
+    private readonly HashSet<string> _failedKeys = new();
     private CancellationTokenSource? _reconnectCts;
 
     // Latest server-issued session handle; reconnects pass it so the same session continues.
@@ -123,7 +124,7 @@ public sealed class SubtitleSessionService
     {
         if (IsActive) return;
 
-        var apiKey = _keys.NextRotatedKey();
+        var apiKey = _keys.ActiveKey();
         if (apiKey == null)
         {
             SetStatus(SessionStatus.Error, L.NoApiKey);
@@ -142,7 +143,7 @@ public sealed class SubtitleSessionService
         _loggedOutputs = 0;
         _unexpectedReconnects = 0;
         _reconnectInFlight = false;
-        _rotateKeyNext = false;
+        _failedKeys.Clear();
         _currentApiKey = apiKey;
         _resumptionHandle = null;
         _resumePending = false;
@@ -291,6 +292,7 @@ public sealed class SubtitleSessionService
     private void OnClientReady()
     {
         _reconnectInFlight = false;
+        _failedKeys.Clear();
         if (_resumePending)
         {
             _resumePending = false;
@@ -329,8 +331,8 @@ public sealed class SubtitleSessionService
             Log("resume failed before setup; next attempt starts a new session");
         }
 
-        if (LiveTranslateClient.IsQuotaError(message))
-            _rotateKeyNext = true;
+        if (LiveTranslateClient.IsKeyError(message) && FailOverKey(message))
+            return;
 
         if (!LiveTranslateClient.IsReconnectableFailure(message))
         {
@@ -342,13 +344,34 @@ public sealed class SubtitleSessionService
         _ = ReconnectAsync(expected: false, reason: message);
     }
 
-    private async Task ReconnectAsync(bool expected, string reason)
+    /// <summary>
+    /// The current key is invalid or out of quota: switch to the next stored key right away
+    /// (no backoff, no retry budget). False when every key has failed — the caller then
+    /// handles the error as usual (fatal or ordinary retry).
+    /// </summary>
+    private bool FailOverKey(string message)
+    {
+        if (_currentApiKey == null) return false;
+        _failedKeys.Add(_currentApiKey);
+        var next = _keys.FailoverFrom(_currentApiKey);
+        if (next == null || _failedKeys.Contains(next)) return false;
+
+        Log("API key failed; switching to the next key");
+        _currentApiKey = next;
+        // A handle belongs to the old key's project; start a new session.
+        _resumptionHandle = null;
+        _reconnectInFlight = false;
+        _ = ReconnectAsync(expected: false, reason: L.SwitchingKey(message), keySwitch: true);
+        return true;
+    }
+
+    private async Task ReconnectAsync(bool expected, string reason, bool keySwitch = false)
     {
         if (_finalizing || !IsActive) return;
         if (_reconnectInFlight) return;
         _reconnectInFlight = true;
 
-        if (!expected)
+        if (!expected && !keySwitch)
         {
             _unexpectedReconnects++;
             if (_unexpectedReconnects > MaxUnexpectedReconnects)
@@ -364,7 +387,7 @@ public sealed class SubtitleSessionService
         if (!expected) SetStatus(SessionStatus.Reconnecting, reason);
         Log($"reconnect expected={expected} unexpected={_unexpectedReconnects}");
 
-        var delay = expected || _unexpectedReconnects <= 0
+        var delay = expected || keySwitch || _unexpectedReconnects <= 0
             ? TimeSpan.Zero
             : TimeSpan.FromSeconds(Math.Min(16, Math.Pow(2, _unexpectedReconnects - 1)));
 
@@ -397,12 +420,6 @@ public sealed class SubtitleSessionService
 
             var settings = _settings.Current;
             var key = _currentApiKey;
-            if (_rotateKeyNext)
-            {
-                key = _keys.NextRotatedKey() ?? key;
-                _currentApiKey = key;
-                _rotateKeyNext = false;
-            }
 
             if (string.IsNullOrEmpty(key))
             {
