@@ -79,7 +79,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public string VersionText { get; } = ReadVersion();
 
-    private static string ReadVersion()
+    internal static string ReadVersion()
     {
         var assembly = typeof(SettingsViewModel).Assembly;
         var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;

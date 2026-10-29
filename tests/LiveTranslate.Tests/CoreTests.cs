@@ -822,3 +822,24 @@ public class DataStoreTests
         Assert.Equal(expected, Languages.CanonicalOrDefault(stored));
     }
 }
+
+public class UpdateCheckerTests
+{
+    [Theory]
+    [InlineData("v0.2.4", "0.2.3")]
+    [InlineData("v0.3.0", "0.2.9")]
+    [InlineData("v1.0", "0.9.9")]
+    [InlineData("v0.2.10", "0.2.9")]
+    public void NewerTag_IsAnUpdate(string latest, string current) =>
+        Assert.True(LiveTranslate.Core.Update.UpdateChecker.IsNewer(latest, current));
+
+    [Theory]
+    [InlineData("v0.2.3", "0.2.3")]
+    [InlineData("v0.2.3", "0.2.3-debug.main.abc1234")]
+    [InlineData("v0.2.0", "0.2")]
+    [InlineData("v0.2.2", "0.2.3")]
+    [InlineData("nightly", "0.2.3")]
+    [InlineData("v0.3.0", "")]
+    public void SameOlderOrMalformed_IsNotAnUpdate(string latest, string current) =>
+        Assert.False(LiveTranslate.Core.Update.UpdateChecker.IsNewer(latest, current));
+}

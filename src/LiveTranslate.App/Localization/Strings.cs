@@ -100,4 +100,11 @@ public static class L
     public static string AboutDescription =>
         T("基于 Google Gemini Live Translate 的实时字幕应用。",
           "Real-time subtitles powered by Google Gemini Live Translate.");
+
+    // Update check
+    public static string UpdateTitle => T("发现新版本", "New version available");
+    public static string UpdateSummary(string latest, string current) =>
+        T($"实时翻译 {latest} 已发布（当前 {current}），是否前往 GitHub Releases 下载？",
+          $"Live Translate {latest} is out (you have {current}). Download it from GitHub Releases?");
+    public static string UpdateDownload => T("前往下载", "Download");
 }
